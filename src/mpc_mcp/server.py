@@ -12,7 +12,7 @@ import mido
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from . import midifile, project, sequence
+from . import check, midifile, project, sequence
 from .midi_io import MidiRig, list_ports
 from .notes import NoteEvent, parse_note
 from .schedule import build_schedule
@@ -215,6 +215,15 @@ def inspect_project(path: str, mode: str = "outline", query: str = "", depth: in
     if mode == "find":
         return project.find_keys(data, query)
     raise ValueError('mode must be "outline", "path", "find" or "info"')
+
+
+@tool
+def check_project_for_standalone(path: str, os_version: str = "2.15", ram_gb: float = 2.0) -> dict[str, Any]:
+    """Check whether a project (.xpj) will load and play on standalone hardware: the saving version
+    against the hardware OS, files missing or outside the project folder, samples programs need,
+    plugins the hardware may lack, and sample memory. Read-only. Run it before moving a project
+    made in the desktop software onto the MPC."""
+    return check.check_for_standalone(Path(path), os_version=os_version, ram_gb=ram_gb)
 
 
 @tool

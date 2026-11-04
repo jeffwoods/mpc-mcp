@@ -20,6 +20,7 @@ Not affiliated with or endorsed by Akai Professional. "MPC" and "Akai" are their
 - `scan_mpc_folder`: list projects, programs and sequences on an SD card or USB stick
 - `inspect_project`: read-only exploration of `.xpj`, `.xpm` and other MPC files (outline, path, find)
 - `summarize_program`: name, type and samples of an `.xpm` program
+- `check_project_for_standalone`: before moving a desktop project onto the hardware, checks the saving version against the hardware OS, files missing or outside the project folder, samples that programs need, plugins the hardware may lack, and sample memory against the hardware's RAM
 
 ## What it doesn't do (yet)
 

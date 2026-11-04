@@ -188,7 +188,7 @@ def summarize_program(path: Path) -> dict[str, Any]:
     decoded = decode(path)
     if decoded["format"] != "xml":
         return {"format": decoded["format"], "notes": decoded["notes"] + ["Expected XML for .xpm."]}
-    root = ET.fromstring(_xml_text(path))
+    root = ET.fromstring(xml_text(path))
     program = root.find(".//Program")
     name = root.findtext(".//ProgramName")
     samples = sorted({s.text.strip() for s in root.iter("SampleName") if s.text and s.text.strip()})
@@ -200,7 +200,7 @@ def summarize_program(path: Path) -> dict[str, Any]:
     }
 
 
-def _xml_text(path: Path) -> str:
+def xml_text(path: Path) -> str:
     raw = Path(path).expanduser().read_bytes()
     if raw[:2] == GZIP_MAGIC:
         raw = gzip.decompress(raw)
