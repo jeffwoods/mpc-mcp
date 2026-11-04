@@ -137,6 +137,34 @@ def _akai_note(note, velocity, length):
     return bytes([0x47, 0x61, 0x11, 0, note, velocity, 0, 0, 0, 0x40, lo, hi, 0, 0, 0, 0, 0, 0, 0, 0])
 
 
+# Track header prefix as saved by MPC 2.8 (Beats Academy 2); the tail before the name varies by version.
+HEADER_28 = bytes.fromhex("47 61 10 01 00 00 00 09") + b"All Ports\x00\x03OSX\x00\x01\x06<none>\x00\x03OSX\x00\x02\n2147483647"
+
+
+def _header(index, kind, program, tail=bytes.fromhex("07 00 64 00 00 00 00 00 10 7f 40")):
+    data = bytearray(HEADER_28 + tail)
+    data[4], data[5] = index, kind
+    return bytes(data) + bytes([len(program)]) + program.encode()
+
+
+def test_track_header():
+    from mpc_mcp import sequence
+
+    bass = _header(3, 0x01, "Inst-Bass-F9 JP Bass")
+    assert sequence.parse_track_header(bass) == {"index": 3, "type": "Keygroup", "program": "Inst-Bass-F9 JP Bass"}
+    # A 32-character name: its length byte (0x20) is itself printable.
+    kit = _header(1, 0x00, "Trap Soul Kit-Soul Love 136 C#m ")
+    assert sequence.parse_track_header(kit)["program"] == "Trap Soul Kit-Soul Love 136 C#m "
+    # MPC 2.0 tail with no 7f 40 before the name.
+    old = _header(0, 0x00, "Shadow Kit Bass", tail=b"\xff\x00\x7f\x80" + b"1" * 128 + b"\x11" + b"0" * 17
+                  + bytes.fromhex("08 00 64 00 00 00 00 00 00 7f 3f"))
+    assert sequence.parse_track_header(old)["program"] == "Shadow Kit Bass"
+
+    moved = sequence.retarget_track_header(old, 2, "Plugin", "Plugin 001")
+    assert moved[:len(old) - 16] == bytes([*old[:4], 2, 3]) + old[6:len(old) - 16]
+    assert sequence.parse_track_header(moved) == {"index": 2, "type": "Plugin", "program": "Plugin 001"}
+
+
 def test_mpc_sequence(tmp_path):
     from mpc_mcp import sequence
 
@@ -148,7 +176,7 @@ def test_mpc_sequence(tmp_path):
     ])
     drums = mido.MidiTrack([
         mido.MetaMessage("track_name", name="Drums\x00"),
-        mido.MetaMessage("sequencer_specific", data=list(b"Ga\x10\x02header")),
+        mido.MetaMessage("sequencer_specific", data=list(_header(1, 0, "Kit"))),
         mido.MetaMessage("sequencer_specific", data=list(_akai_note(36, 100, 239))),
         mido.Message("polytouch", note=36, value=40, time=10),
         mido.MetaMessage("sequencer_specific", data=list(_akai_note(42, 127, 300)), time=950),
@@ -162,6 +190,7 @@ def test_mpc_sequence(tmp_path):
     assert len(s["tracks"]) == 1
     t = s["tracks"][0]
     assert t["name"] == "Drums" and t["pressure_events"] == 1
+    assert (t["type"], t["program"]) == ("Drum", "Kit")
     assert t["notes"] == [
         {"note": 36, "start": 0, "length": round(239 / 960, 4), "velocity": 100},
         {"note": 42, "start": 1, "length": round(300 / 960, 4), "velocity": 127},

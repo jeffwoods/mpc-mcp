@@ -64,6 +64,7 @@ From projects saved by MPC OS 2.10 on an MPC Live II:
 - `.xpj`: XML. Tempo, key, mixer, Q-Link assignments and the project's file list.
 - `.xpm`: XML programs (drum, keygroup, plugin, audio). A plugin program describes its plugin with `Name`, `ManufacturerName`, `FormatName` and `FileOrID`; built-in instruments have `FormatName` `MPC` (for example `MPC:TubeSynth` by AIR Music Technology).
 - `.sxq`: a standard type 1 MIDI file (960 PPQ), but notes are stored as Akai sequencer-specific meta events, not note-on/off: `47 61 11 00 <note> <velocity> 00 00 00 40 <length in 7-bit chunks, low first> ...`. Pad pressure is polyphonic aftertouch. A regular MIDI reader sees no notes.
+- `.sxq` tracks: each starts with a `47 61 10` header. Byte 4 is the track index and byte 5 the track type (`00` drum, `01` keygroup, `03` plugin). It ends with the program name, length-prefixed. The bytes in between vary by OS version. A `47 61 15` event repeats the track index in byte 3. Plugin tracks, and only those, carry a `pytT 03` event before the track name. Confirmed against projects saved by MPC 2.0 and 2.8 as well as OS 2.10.
 - In Controller Mode (OS 2.15.1), the Live II shows up on a Mac as a USB hub with an audio interface, four MIDI ports ("MPC Public", "MPC Private", "MIDI Port A", "MIDI Port B"), and its internal drive and SD card as volumes.
 
 Reports from other models and OS versions are welcome.

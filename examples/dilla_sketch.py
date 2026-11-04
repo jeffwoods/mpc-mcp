@@ -3,8 +3,8 @@
 Usage: python examples/dilla_sketch.py <template.xpj> <expansions dir> <output dir>
 
 Writes <output dir>/Dilla Sketch.xpj and its _[ProjectData] folder. Never modifies the template.
-Track-to-program links, bar count and note events follow the .sxq layout documented in the README;
-the keygroup track-type byte (01) is inferred, not yet confirmed on hardware.
+Track-to-program links, bar count and note events follow the .sxq layout documented in the README
+and in mpc_mcp.sequence.
 """
 
 from __future__ import annotations
@@ -18,6 +18,8 @@ from xml.sax.saxutils import escape
 
 import mido
 
+from mpc_mcp.sequence import PLUGIN_MARKER, retarget_track_header
+
 NAME = "Dilla Sketch"
 BPM = 88
 BARS = 4
@@ -27,7 +29,6 @@ SIX = PPQ // 4  # one 16th
 KIT = ("Vintage Hardware Collection", "Drums-Drumulator.Drum", "Dilla Kit", "Drum")
 BASS = ("Moog Taurus I (1975)", "The Taurus", "Taurus Bass", "Keygroup")
 KEYS = ("Vintage Hardware Collection", "Acoustic-Rhodes A", "Rhodes", "Keygroup")
-TRACK_TYPE = {"Drum": 0x00, "Keygroup": 0x01, "Plugin": 0x03}
 
 KICK, SNARE, RIM, CLAP, HAT, OPEN_HAT = 36, 38, 40, 41, 42, 46
 rng = random.Random(1974)
@@ -99,15 +100,6 @@ def note_block(note: int, velocity: int, length: int) -> list[int]:
             length & 0x7F, (length >> 7) & 0x7F, (length >> 14) & 0x7F, 0, 0, 0, 0, 0, 0, 0]
 
 
-def retarget_header(data: bytes, track_index: int, kind: str, program: str) -> list[int]:
-    """Track header: byte 4 is the track index, byte 5 the type, and it ends with a
-    length-prefixed program name."""
-    old_len = data.rfind(b"\x7f@") + 2
-    body = bytearray(data[:old_len])
-    body[4], body[5] = track_index, TRACK_TYPE[kind]
-    return list(body) + [len(program)] + list(program.encode())
-
-
 def build_sequence(template: Path, out: Path, parts: list[tuple[str, str, str, list]]) -> None:
     src = mido.MidiFile(template)
     mid = mido.MidiFile(type=1, ticks_per_beat=src.ticks_per_beat)
@@ -127,13 +119,17 @@ def build_sequence(template: Path, out: Path, parts: list[tuple[str, str, str, l
     for index, (track_name, program, kind, events) in enumerate(parts):
         tpl = src.tracks[1 + index]
         track = mido.MidiTrack()
+        if kind == "Plugin":
+            track.append(mido.MetaMessage("sequencer_specific", data=list(PLUGIN_MARKER)))
         for msg in tpl:
             if msg.type == "track_name":
                 track.append(msg.copy(name=track_name + "\x00", time=0))
             elif msg.type == "sequencer_specific" and bytes(msg.data[:3]) == b"Ga\x10":
-                track.append(msg.copy(data=retarget_header(bytes(msg.data), index, kind, program), time=0))
+                track.append(msg.copy(data=list(retarget_track_header(bytes(msg.data), index, kind, program)), time=0))
+            elif msg.type == "sequencer_specific" and bytes(msg.data[:3]) == b"Ga\x15":
+                track.append(msg.copy(data=[*msg.data[:3], index, *msg.data[4:]], time=0))
             elif msg.type == "sequencer_specific" and bytes(msg.data[:4]) == b"pytT":
-                track.append(msg.copy(data=[*msg.data[:4], TRACK_TYPE[kind]], time=0))  # track type marker
+                continue  # plugin-only marker; added above when needed
             elif msg.type == "sequencer_specific" and bytes(msg.data[:3]) == b"Ga\x11":
                 break  # template notes start here; ours replace them
             elif msg.type in ("polytouch", "end_of_track"):
