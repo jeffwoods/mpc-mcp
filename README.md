@@ -29,10 +29,9 @@ Not affiliated with or endorsed by Akai Professional. "MPC" and "Akai" are their
 
 ## Connecting the MPC
 
-Any of these should work. Which ones depend on your model and OS version, so check `midi_ports` after connecting.
-- A USB MIDI interface to the MPC's 5-pin MIDI in/out
-- USB from the MPC to the computer, if your MPC shows up as a MIDI device
-- The MPC desktop software, through its MIDI ports or a virtual port (macOS IAC Driver)
+Check `midi_ports` after connecting. What we've confirmed on an MPC Live II running MPC OS 2.15.1:
+- **Standalone mode:** the MPC does not appear on USB at all. Use a USB MIDI interface to its 5-pin MIDI in/out. Move files by SD card or USB stick.
+- **Controller Mode:** the MPC appears as four MIDI ports plus its internal drive and SD card as volumes. Sound then comes from the MPC desktop software, which you can reach through a virtual port (macOS IAC Driver).
 
 On the MPC, set the receiving track's MIDI input to the port and channel you send on. To capture pads, enable MIDI out on the track. To follow `send_clock`, set the MPC to sync to incoming MIDI clock.
 
@@ -64,7 +63,7 @@ From projects saved by MPC OS 2.10 on an MPC Live II:
 - `.xpj`: XML. Tempo, key, mixer, Q-Link assignments and the project's file list.
 - `.xpm`: XML programs (drum, keygroup, plugin, audio).
 - `.sxq`: a standard type 1 MIDI file (960 PPQ), but notes are stored as Akai sequencer-specific meta events, not note-on/off: `47 61 11 00 <note> <velocity> 00 00 00 40 <length in 7-bit chunks, low first> ...`. Pad pressure is polyphonic aftertouch. A regular MIDI reader sees no notes.
-- In Controller Mode, the Live II shows up on a Mac as a USB hub with an audio interface, four MIDI ports ("MPC Public", "MPC Private", "MIDI Port A", "MIDI Port B"), and its internal drive and SD card as volumes.
+- In Controller Mode (OS 2.15.1), the Live II shows up on a Mac as a USB hub with an audio interface, four MIDI ports ("MPC Public", "MPC Private", "MIDI Port A", "MIDI Port B"), and its internal drive and SD card as volumes.
 
 Reports from other models and OS versions are welcome.
 
