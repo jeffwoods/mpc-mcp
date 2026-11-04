@@ -120,3 +120,10 @@ def test_memory_over_limit_fails(tmp_path):
     xpj = make_project(tmp_path)
     r = check_for_standalone(xpj, ram_gb=0.000001)
     assert by_name(r)["memory"]["status"] == "fail"
+
+
+def test_ignores_macos_metadata_files(tmp_path):
+    xpj = make_project(tmp_path)
+    (tmp_path / "Song_[ProjectData]" / "._Kit.Drum.xpm").write_bytes(b"\x00\x05\x16\x07binary")
+    (tmp_path / "Song_[ProjectData]" / "._Kick.WAV").write_bytes(b"\x00\x05\x16\x07")
+    assert check_for_standalone(xpj)["verdict"] == "ok"

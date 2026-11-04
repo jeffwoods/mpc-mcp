@@ -168,7 +168,7 @@ def copy_program(expansions: Path, spec: tuple[str, str, str, str], data_dir: Pa
     copied = [target.name]
     for s in samples:
         f = files[s.strip().lower()]
-        shutil.copy2(f, data_dir / f.name)
+        shutil.copyfile(f, data_dir / f.name)
         copied.append(f.name)
     return copied
 
@@ -185,7 +185,7 @@ def main(template_xpj: Path, expansions: Path, out_dir: Path) -> None:
     for spec in (KIT, BASS, KEYS):
         files += copy_program(expansions, spec, data_dir)
     for keep in ("Audio 001.Audio.xpm", "Project Settings.xml", "Midi Controller.mcn"):
-        shutil.copy2(tpl_data / keep, data_dir / keep)
+        shutil.copyfile(tpl_data / keep, data_dir / keep)
     files.append("Audio 001.Audio.xpm")
 
     xal = (tpl_data / "All Sequences & Songs.xal").read_text(encoding="utf-8")

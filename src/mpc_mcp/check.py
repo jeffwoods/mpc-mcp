@@ -54,6 +54,11 @@ def check_version(decoded: dict[str, Any], target: tuple[int, ...]) -> dict[str,
     return _result("version", "ok", f"Saved by {app} {_fmt(saved)}; hardware runs {_fmt(target)}.", saved=_fmt(saved))
 
 
+def _programs(data_dir: Path) -> list[Path]:
+    """Program files, skipping macOS "._" metadata files that appear on FAT/exFAT cards."""
+    return sorted(p for p in data_dir.glob("*.xpm") if not p.name.startswith("."))
+
+
 def _project_data_dir(xpj: Path) -> Path:
     return xpj.with_name(f"{xpj.stem}_[ProjectData]")
 
@@ -87,9 +92,9 @@ def check_samples(xpj: Path) -> dict[str, Any]:
     data_dir = _project_data_dir(xpj)
     if not data_dir.is_dir():
         return _result("samples", "fail", f"No project data folder next to the project ({data_dir.name}).")
-    stems = {f.stem.lower() for f in data_dir.iterdir() if f.suffix.lower() in project.AUDIO}
+    stems = {f.stem.lower() for f in data_dir.iterdir() if f.suffix.lower() in project.AUDIO and not f.name.startswith(".")}
     missing: dict[str, list[str]] = {}
-    for xpm in sorted(data_dir.glob("*.xpm")):
+    for xpm in _programs(data_dir):
         try:
             names = project.summarize_program(xpm).get("samples", [])
         except (ET.ParseError, UnicodeDecodeError):
@@ -129,7 +134,7 @@ def check_plugins(xpj: Path) -> dict[str, Any]:
     """Format "MPC" is the hardware's built-in version (confirmed on OS 2.10 files). VST3 or AU
     plugins can't run on standalone 2.x. AIR/Akai ones may have a built-in equivalent."""
     data_dir = _project_data_dir(xpj)
-    files = [xpj, *sorted(data_dir.glob("*.xpm"))] if data_dir.is_dir() else [xpj]
+    files = [xpj, *_programs(data_dir)] if data_dir.is_dir() else [xpj]
     records, unreadable = [], []
     for f in files:
         found = _plugin_records(f)
@@ -176,7 +181,8 @@ def _audio_bytes(path: Path) -> tuple[int, bool]:
 
 def check_memory(xpj: Path, ram_gb: float) -> dict[str, Any]:
     data_dir = _project_data_dir(xpj)
-    files = [f for f in data_dir.iterdir() if f.suffix.lower() in project.AUDIO] if data_dir.is_dir() else []
+    files = ([f for f in data_dir.iterdir() if f.suffix.lower() in project.AUDIO and not f.name.startswith(".")]
+             if data_dir.is_dir() else [])
     total, estimated = 0, 0
     for f in files:
         size, exact = _audio_bytes(f)
