@@ -1,0 +1,211 @@
+"""Build a 4-bar boom-bap sketch as a new MPC project, using an existing 2.x project as a template.
+
+Usage: python examples/dilla_sketch.py <template.xpj> <expansions dir> <output dir>
+
+Writes <output dir>/Dilla Sketch.xpj and its _[ProjectData] folder. Never modifies the template.
+Track-to-program links, bar count and note events follow the .sxq layout documented in the README;
+the keygroup track-type byte (01) is inferred, not yet confirmed on hardware.
+"""
+
+from __future__ import annotations
+
+import random
+import re
+import shutil
+import sys
+from pathlib import Path
+from xml.sax.saxutils import escape
+
+import mido
+
+NAME = "Dilla Sketch"
+BPM = 88
+BARS = 4
+PPQ = 960
+SIX = PPQ // 4  # one 16th
+
+KIT = ("Vintage Hardware Collection", "Drums-Drumulator.Drum", "Dilla Kit", "Drum")
+BASS = ("Moog Taurus I (1975)", "The Taurus", "Taurus Bass", "Keygroup")
+KEYS = ("Vintage Hardware Collection", "Acoustic-Rhodes A", "Rhodes", "Keygroup")
+TRACK_TYPE = {"Drum": 0x00, "Keygroup": 0x01, "Plugin": 0x03}
+
+KICK, SNARE, RIM, CLAP, HAT, OPEN_HAT = 36, 38, 40, 41, 42, 46
+rng = random.Random(1974)
+
+
+def jitter(lo: int, hi: int) -> int:
+    return rng.randint(lo, hi)
+
+
+def drums() -> list[tuple[int, int, int, int]]:
+    """(tick, note, velocity, length). Kicks rush a little, snares drag, hats swing and wobble."""
+    ev = []
+    kicks = [[0, 3, 10], [0, 7, 10], [0, 3, 10], [0, 3, 10, 14]]
+    ghosts = [[], [7, 15], [9], [6]]
+    for bar in range(BARS):
+        b = bar * 4 * PPQ
+        for i, pos in enumerate(kicks[bar]):
+            off = jitter(0, 8) if pos == 0 else jitter(-22, 4)
+            ev.append((b + pos * SIX + off, KICK, jitter(104, 120) if i == 0 else jitter(86, 104), 200))
+        for pos in (4, 12):
+            ev.append((b + pos * SIX + jitter(28, 46), SNARE, jitter(106, 122), 200))
+        if bar == 3:
+            ev.append((b + 12 * SIX + jitter(40, 55), CLAP, 84, 200))
+        for pos in ghosts[bar]:
+            ev.append((b + pos * SIX + jitter(10, 30), RIM, jitter(34, 54), 120))
+        for pos in range(16):
+            if bar == 3 and pos >= 14:
+                continue
+            on_eighth = pos % 2 == 0
+            if not on_eighth and rng.random() < 0.2:
+                continue
+            swing = 0 if on_eighth else 58
+            ev.append((b + pos * SIX + swing + jitter(-14, 14), HAT,
+                       jitter(78, 98) if on_eighth else jitter(38, 64), 120))
+        if bar == 3:
+            ev.append((b + 14 * SIX + 52, OPEN_HAT, 82, 400))
+    return ev
+
+
+# Db major ii-V-I-vi, rootless voicings: Ebm9, Ab13, Dbmaj9, Bbm9
+CHORDS = [[54, 58, 61, 65], [54, 58, 60, 65], [53, 56, 60, 63], [56, 60, 61, 65]]
+ROOTS = [27, 32, 37, 34]  # Eb1, Ab1, Db2, Bb1
+
+
+def keys() -> list[tuple[int, int, int, int]]:
+    ev = []
+    for bar, chord in enumerate(CHORDS):
+        b = bar * 4 * PPQ
+        for start, length, vel in ((jitter(40, 60), int(2.4 * PPQ), 78), (10 * SIX + jitter(30, 50), int(1.4 * PPQ), 66)):
+            for i, note in enumerate(chord):
+                ev.append((b + start + i * jitter(9, 16), note, vel + jitter(-6, 6), length))
+    return ev
+
+
+def bass() -> list[tuple[int, int, int, int]]:
+    ev = []
+    for bar, root in enumerate(ROOTS):
+        b = bar * 4 * PPQ
+        ev.append((b + jitter(8, 20), root, 108, 5 * SIX))
+        ev.append((b + 7 * SIX + jitter(10, 25), root + 12 if bar % 2 else root + 7, 92, SIX + 60))
+        ev.append((b + 10 * SIX + jitter(5, 20), root, 102, 4 * SIX))
+        if bar == 3:
+            ev.append((b + 14 * SIX + 30, ROOTS[0] - 1, 88, SIX + 80))  # chromatic walk back to Eb
+    return ev
+
+
+def note_block(note: int, velocity: int, length: int) -> list[int]:
+    return [0x47, 0x61, 0x11, 0x00, note, velocity, 0, 0, 0, 0x40,
+            length & 0x7F, (length >> 7) & 0x7F, (length >> 14) & 0x7F, 0, 0, 0, 0, 0, 0, 0]
+
+
+def retarget_header(data: bytes, track_index: int, kind: str, program: str) -> list[int]:
+    """Track header: byte 4 is the track index, byte 5 the type, and it ends with a
+    length-prefixed program name."""
+    old_len = data.rfind(b"\x7f@") + 2
+    body = bytearray(data[:old_len])
+    body[4], body[5] = track_index, TRACK_TYPE[kind]
+    return list(body) + [len(program)] + list(program.encode())
+
+
+def build_sequence(template: Path, out: Path, parts: list[tuple[str, str, str, list]]) -> None:
+    src = mido.MidiFile(template)
+    mid = mido.MidiFile(type=1, ticks_per_beat=src.ticks_per_beat)
+    head = mido.MidiTrack()
+    for msg in src.tracks[0]:
+        if msg.type == "track_name":
+            msg = msg.copy(name=NAME + "\x00")
+        elif msg.type == "set_tempo":
+            msg = msg.copy(tempo=mido.bpm2tempo(BPM))
+        elif msg.type == "sequencer_specific" and bytes(msg.data[:3]) == b"Ga\x00":
+            data = list(msg.data)
+            data[4], data[8] = BARS, BARS + 1
+            msg = msg.copy(data=data)
+        head.append(msg)
+    mid.tracks.append(head)
+
+    for index, (track_name, program, kind, events) in enumerate(parts):
+        tpl = src.tracks[1 + index]
+        track = mido.MidiTrack()
+        for msg in tpl:
+            if msg.type == "track_name":
+                track.append(msg.copy(name=track_name + "\x00", time=0))
+            elif msg.type == "sequencer_specific" and bytes(msg.data[:3]) == b"Ga\x10":
+                track.append(msg.copy(data=retarget_header(bytes(msg.data), index, kind, program), time=0))
+            elif msg.type == "sequencer_specific" and bytes(msg.data[:4]) == b"pytT":
+                track.append(msg.copy(data=[*msg.data[:4], TRACK_TYPE[kind]], time=0))  # track type marker
+            elif msg.type == "sequencer_specific" and bytes(msg.data[:3]) == b"Ga\x11":
+                break  # template notes start here; ours replace them
+            elif msg.type in ("polytouch", "end_of_track"):
+                continue
+            else:
+                track.append(msg.copy(time=0))
+        now = 0
+        for tick, note, vel, length in sorted(events):
+            tick = max(tick, 0)
+            track.append(mido.MetaMessage("sequencer_specific", data=note_block(note, vel, length), time=tick - now))
+            now = tick
+        track.append(mido.MetaMessage("end_of_track", time=0))
+        mid.tracks.append(track)
+
+    for program in [p for _, p, _, _ in parts] + ["Audio 001"]:
+        name = program.encode()
+        data = [0x47, 0x61, 0x13, len(name) + 2, 0x00, *name, 0, 0]
+        mid.tracks.append(mido.MidiTrack([mido.MetaMessage("sequencer_specific", data=data),
+                                          mido.MetaMessage("end_of_track")]))
+    mid.save(out)
+
+
+def copy_program(expansions: Path, spec: tuple[str, str, str, str], data_dir: Path) -> list[str]:
+    folder, source, name, kind = spec
+    src_dir = expansions / folder
+    text = (src_dir / f"{source}.xpm").read_text(encoding="utf-8")
+    text = re.sub(r"<ProgramName>[^<]*</ProgramName>", f"<ProgramName>{name}</ProgramName>", text, count=1)
+    target = data_dir / f"{name}.{kind}.xpm"
+    target.write_text(text, encoding="utf-8")
+    samples = sorted(set(re.findall(r"<SampleName>([^<]+)</SampleName>", text)))
+    files = {f.stem.lower(): f for f in src_dir.iterdir() if f.suffix.lower() in (".wav", ".aif", ".aiff")}
+    copied = [target.name]
+    for s in samples:
+        f = files[s.strip().lower()]
+        shutil.copy2(f, data_dir / f.name)
+        copied.append(f.name)
+    return copied
+
+
+def main(template_xpj: Path, expansions: Path, out_dir: Path) -> None:
+    tpl_data = template_xpj.with_name(f"{template_xpj.stem}_[ProjectData]")
+    xpj = out_dir / f"{NAME}.xpj"
+    data_dir = out_dir / f"{NAME}_[ProjectData]"
+    if xpj.exists() or data_dir.exists():
+        sys.exit(f"{xpj} already exists; not overwriting")
+    data_dir.mkdir()
+
+    files = ["All Sequences & Songs.xal"]
+    for spec in (KIT, BASS, KEYS):
+        files += copy_program(expansions, spec, data_dir)
+    for keep in ("Audio 001.Audio.xpm", "Project Settings.xml", "Midi Controller.mcn"):
+        shutil.copy2(tpl_data / keep, data_dir / keep)
+    files.append("Audio 001.Audio.xpm")
+
+    xal = (tpl_data / "All Sequences & Songs.xal").read_text(encoding="utf-8")
+    (data_dir / "All Sequences & Songs.xal").write_text(xal.replace("My 1st sequence", NAME, 1), encoding="utf-8")
+
+    build_sequence(tpl_data / "1.sxq", data_dir / "1.sxq", [
+        ("Drums", KIT[2], "Drum", drums()),
+        ("Bass", BASS[2], "Keygroup", bass()),
+        ("Keys", KEYS[2], "Keygroup", keys()),
+    ])
+
+    text = template_xpj.read_bytes().decode("utf-8")
+    nl = "\r\n" if "\r\n" in text else "\n"
+    listing = nl.join(f"    <File>{escape(f'./{data_dir.name}/{f}')}</File>" for f in files)
+    text = re.sub(r"<FileList>.*?</FileList>", lambda _: f"<FileList>{nl}{listing}{nl}  </FileList>", text, flags=re.S)
+    text = re.sub(r"<BPM>[^<]*</BPM>", f"<BPM>{BPM:.6f}</BPM>", text)
+    text = re.sub(r"<MasterTempo.Value>[^<]*</MasterTempo.Value>", f"<MasterTempo.Value>{BPM:.6f}</MasterTempo.Value>", text)
+    xpj.write_bytes(text.encode("utf-8"))
+    print(xpj)
+
+
+if __name__ == "__main__":
+    main(*(Path(a) for a in sys.argv[1:4]))
