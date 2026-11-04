@@ -16,7 +16,6 @@ from typing import Any
 from . import project
 
 BUILT_IN_MARKERS = ("air music", "akai", "mpc", "inmusic")
-PLUGIN_TAG = re.compile(r"plugin|vst|\bau\b|manufacturer|vendor", re.I)
 
 
 def _version(text: str | None) -> tuple[int, ...] | None:
@@ -106,45 +105,62 @@ def check_samples(xpj: Path) -> dict[str, Any]:
     return _result("samples", "ok", "Every sample the programs use is in the project folder.")
 
 
-def _plugin_strings(path: Path) -> set[str]:
+def _plugin_records(path: Path) -> list[dict[str, str]] | None:
+    """Plugin descriptors in a project or program file: any element with a FormatName child.
+    Instruments carry them on <Program>; insert effects are assumed to use the same fields."""
     try:
         root = ET.fromstring(project.xml_text(path))
     except (ET.ParseError, UnicodeDecodeError):
-        return set()
-    found = set()
-    for el in root.iter():
-        if PLUGIN_TAG.search(el.tag) and el.text and el.text.strip() and len(el.text.strip()) < 120:
-            found.add(el.text.strip())
-        for k, v in el.attrib.items():
-            if PLUGIN_TAG.search(k) and v.strip():
-                found.add(v.strip())
-    return found
+        return None
+    return [
+        {
+            "file": path.name,
+            "name": (el.findtext("Name") or "").strip(),
+            "maker": (el.findtext("ManufacturerName") or "").strip(),
+            "format": (el.findtext("FormatName") or "").strip(),
+            "id": (el.findtext("FileOrID") or "").strip(),
+        }
+        for el in root.iter()
+        if el.find("FormatName") is not None
+    ]
 
 
 def check_plugins(xpj: Path) -> dict[str, Any]:
-    """Flag plugin programs whose identifiers don't look like Akai's built-in instruments.
-
-    The plugin fields in .xpm files haven't been mapped yet, so this reports what it finds and
-    warns rather than fails."""
+    """Format "MPC" is the hardware's built-in version (confirmed on OS 2.10 files). VST3 or AU
+    plugins can't run on standalone 2.x. AIR/Akai ones may have a built-in equivalent."""
     data_dir = _project_data_dir(xpj)
-    programs = sorted(data_dir.glob("*.Plugin.xpm")) if data_dir.is_dir() else []
-    if not programs:
-        return _result("plugins", "ok", "No plugin programs.")
-    report, suspicious = {}, []
-    for xpm in programs:
-        strings = sorted(_plugin_strings(xpm))
-        report[xpm.name] = strings
-        if strings and not any(m in s.lower() for s in strings for m in BUILT_IN_MARKERS):
-            suspicious.append(xpm.name)
-    if suspicious:
-        return _result("plugins", "warn",
-                       f"{len(suspicious)} plugin program(s) don't look like Akai built-ins and may be silent "
-                       "on the hardware.", programs=report, suspicious=suspicious)
-    return _result("plugins", "ok" if all(report.values()) else "warn",
-                   f"{len(programs)} plugin program(s); identifiers look like Akai built-ins."
-                   if all(report.values()) else
-                   f"{len(programs)} plugin program(s); couldn't find plugin identifiers to check.",
-                   programs=report)
+    files = [xpj, *sorted(data_dir.glob("*.xpm"))] if data_dir.is_dir() else [xpj]
+    records, unreadable = [], []
+    for f in files:
+        found = _plugin_records(f)
+        if found is None:
+            unreadable.append(f.name)
+            continue
+        records += found
+        if f.name.endswith(".Plugin.xpm") and not found:
+            unreadable.append(f.name)
+    foreign = [r for r in records if r["format"].upper() != "MPC"]
+    blocked = [r for r in foreign if not any(m in r["maker"].lower() for m in BUILT_IN_MARKERS)]
+    akai_desktop = [r for r in foreign if r not in blocked]
+    if blocked:
+        return _result("plugins", "fail",
+                       f"{len(blocked)} third-party plugin(s) won't run on the hardware, so those parts will be "
+                       "silent. Swap them for built-in instruments or resample them to audio.",
+                       blocked=blocked, plugins=records)
+    if akai_desktop or unreadable:
+        parts = []
+        if akai_desktop:
+            parts.append(f"{len(akai_desktop)} Akai/AIR plugin(s) loaded in desktop format; the hardware may "
+                         "have a built-in version, but check them after loading")
+        if unreadable:
+            parts.append(f"couldn't identify the plugin in {len(unreadable)} file(s)")
+        return _result("plugins", "warn", "; ".join(parts).capitalize() + ".",
+                       plugins=records, unidentified=unreadable)
+    if not records:
+        return _result("plugins", "ok", "No plugins.")
+    names = ", ".join(sorted({r["name"] for r in records}))
+    return _result("plugins", "ok", f"All {len(records)} plugin(s) are built-in MPC versions: {names}.",
+                   plugins=records)
 
 
 def _audio_bytes(path: Path) -> tuple[int, bool]:
@@ -168,7 +184,9 @@ def check_memory(xpj: Path, ram_gb: float) -> dict[str, Any]:
         estimated += not exact
     limit = ram_gb * 1024**3
     share = total / limit if limit else 0
-    detail = f"About {total / 1024**2:.0f} MB of audio, {share:.0%} of {ram_gb:g} GB sample RAM."
+    mb = total / 1024**2
+    detail = f"About {mb:.1f} MB of audio" if mb < 10 else f"About {mb:.0f} MB of audio"
+    detail += f", {share:.0%} of {ram_gb:g} GB sample RAM."
     if estimated:
         detail += f" {estimated} compressed or unreadable file(s) counted at file size, so the real figure is higher."
     detail += " The MPC may hold samples in a larger format than on disk; treat this as a lower bound."

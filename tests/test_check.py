@@ -17,7 +17,8 @@ DRUM = """<?xml version="1.0" encoding="UTF-8"?>
 
 PLUGIN = """<?xml version="1.0" encoding="UTF-8"?>
 <MPCVObject><Program type="Plugin"><ProgramName>Synth</ProgramName>
-<PluginName>{name}</PluginName><PluginManufacturer>{maker}</PluginManufacturer></Program></MPCVObject>"""
+<Name>{name}</Name><DescriptiveName>{name}</DescriptiveName><FormatName>{fmt}</FormatName>
+<ManufacturerName>{maker}</ManufacturerName><FileOrID>{fmt}:{name}</FileOrID></Program></MPCVObject>"""
 
 
 def _wav(path, frames=1000):
@@ -40,7 +41,8 @@ def make_project(tmp_path, version="2.15.1.10", samples=("Kick",), extra_layers=
     (data / "Kit.Drum.xpm").write_text(DRUM.format(layers=layers))
     listed.append("./Song_[ProjectData]/Kit.Drum.xpm")
     if plugin:
-        (data / "Synth.Plugin.xpm").write_text(PLUGIN.format(name=plugin[0], maker=plugin[1]))
+        name, maker, fmt = plugin
+        (data / "Synth.Plugin.xpm").write_text(PLUGIN.format(name=name, maker=maker, fmt=fmt))
     listed += files_extra
     xpj = tmp_path / "Song.xpj"
     xpj.write_text(XPJ.format(version=version, files="".join(f"<File>{f}</File>" for f in listed)))
@@ -89,15 +91,29 @@ def test_program_sample_not_in_folder_fails(tmp_path):
     assert samples["missing"] == {"Kit.Drum.xpm": ["Expansion Snare"]}
 
 
-def test_third_party_plugin_warns(tmp_path):
-    xpj = make_project(tmp_path, plugin=("Serum", "Xfer Records"))
+def test_third_party_plugin_fails(tmp_path):
+    xpj = make_project(tmp_path, plugin=("Serum", "Xfer Records", "VST3"))
     plugins = by_name(check_for_standalone(xpj))["plugins"]
-    assert plugins["status"] == "warn" and plugins["suspicious"] == ["Synth.Plugin.xpm"]
+    assert plugins["status"] == "fail"
+    assert [b["name"] for b in plugins["blocked"]] == ["Serum"]
 
 
-def test_akai_plugin_ok(tmp_path):
-    xpj = make_project(tmp_path, plugin=("Hype", "AIR Music Technology"))
-    assert by_name(check_for_standalone(xpj))["plugins"]["status"] == "ok"
+def test_akai_plugin_in_desktop_format_warns(tmp_path):
+    xpj = make_project(tmp_path, plugin=("Hype", "AIR Music Technology", "VST3"))
+    assert by_name(check_for_standalone(xpj))["plugins"]["status"] == "warn"
+
+
+def test_builtin_plugin_ok(tmp_path):
+    xpj = make_project(tmp_path, plugin=("TubeSynth", "AIR Music Technology", "MPC"))
+    plugins = by_name(check_for_standalone(xpj))["plugins"]
+    assert plugins["status"] == "ok" and "TubeSynth" in plugins["detail"]
+
+
+def test_unidentifiable_plugin_program_warns(tmp_path):
+    xpj = make_project(tmp_path)
+    (tmp_path / "Song_[ProjectData]" / "Odd.Plugin.xpm").write_text("<MPCVObject><Program/></MPCVObject>")
+    plugins = by_name(check_for_standalone(xpj))["plugins"]
+    assert plugins["status"] == "warn" and plugins["unidentified"] == ["Odd.Plugin.xpm"]
 
 
 def test_memory_over_limit_fails(tmp_path):
