@@ -130,3 +130,40 @@ def test_live_loopback():
         got = [m for m in listener.iter_pending() if m.type == "note_on"]
     rig.close()
     assert [m.note for m in got] == [36, 38, 42]
+
+
+def _akai_note(note, velocity, length):
+    lo, hi = length & 0x7F, (length >> 7) & 0x7F
+    return bytes([0x47, 0x61, 0x11, 0, note, velocity, 0, 0, 0, 0x40, lo, hi, 0, 0, 0, 0, 0, 0, 0, 0])
+
+
+def test_mpc_sequence(tmp_path):
+    from mpc_mcp import sequence
+
+    mid = mido.MidiFile(type=1, ticks_per_beat=960)
+    head = mido.MidiTrack([
+        mido.MetaMessage("track_name", name="Seq 1\x00"),
+        mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(90)),
+        mido.MetaMessage("time_signature", numerator=4, denominator=4),
+    ])
+    drums = mido.MidiTrack([
+        mido.MetaMessage("track_name", name="Drums\x00"),
+        mido.MetaMessage("sequencer_specific", data=list(b"Ga\x10\x02header")),
+        mido.MetaMessage("sequencer_specific", data=list(_akai_note(36, 100, 239))),
+        mido.Message("polytouch", note=36, value=40, time=10),
+        mido.MetaMessage("sequencer_specific", data=list(_akai_note(42, 127, 300)), time=950),
+    ])
+    mid.tracks += [head, drums, mido.MidiTrack([mido.MetaMessage("sequencer_specific", data=list(b"Ga\x15"))])]
+    path = tmp_path / "1.sxq"
+    mid.save(path)
+
+    s = sequence.read_sequence(path)
+    assert (s["bpm"], s["time_signature"], s["name"]) == (90, "4/4", "Seq 1")
+    assert len(s["tracks"]) == 1
+    t = s["tracks"][0]
+    assert t["name"] == "Drums" and t["pressure_events"] == 1
+    assert t["notes"] == [
+        {"note": 36, "start": 0, "length": round(239 / 960, 4), "velocity": 100},
+        {"note": 42, "start": 1, "length": round(300 / 960, 4), "velocity": 127},
+    ]
+    assert project.decode(path)["format"] == "midi"

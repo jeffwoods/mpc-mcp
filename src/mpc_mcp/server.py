@@ -12,7 +12,7 @@ import mido
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from . import midifile, project
+from . import midifile, project, sequence
 from .midi_io import MidiRig, list_ports
 from .notes import NoteEvent, parse_note
 from .schedule import build_schedule
@@ -28,7 +28,8 @@ tempo if its sync setting is set to receive MIDI clock.
 Times are in beats (quarter notes). Middle C is C4 = 60.
 
 Files: write_midi_file is the reliable way to hand the MPC new parts (import the .mid on the MPC).
-inspect_project decodes .xpj and .xpm files read-only. The .xpj format is undocumented, so explore
+inspect_project decodes .xpj and .xpm files read-only; read_mpc_sequence reads the notes in .sxq
+sequence files. The .xpj format is undocumented, so explore
 with outline, find and path rather than assuming a structure. Never edit .xpj files.
 """
 
@@ -174,6 +175,13 @@ def write_midi_file(path: str, parts: dict[str, list[NoteEvent]], bpm: float = 9
 def read_midi_file(path: str) -> dict[str, Any]:
     """Read a .mid into tempo and per-track note events. Use it on MIDI exported from the MPC."""
     return _clip(midifile.read_midi(Path(path)))
+
+
+@tool
+def read_mpc_sequence(path: str) -> dict[str, Any]:
+    """Read an MPC sequence (.sxq, in a project's _[ProjectData] folder) into tempo and per-track
+    notes in beats. Read-only."""
+    return _clip(sequence.read_sequence(Path(path)), limit=60000)
 
 
 @tool

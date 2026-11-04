@@ -1,7 +1,7 @@
 """Read MPC project files without assuming a format.
 
-The .xpj format is undocumented and has changed between MPC OS versions. Community reports say
-MPC 2.x wrote text (XML or JSON after a short header) and MPC 3 writes gzip-compressed JSON.
+The .xpj format is undocumented and has changed between MPC OS versions. MPC OS 2.10 writes XML
+(confirmed on real files); community reports say MPC 3 writes gzip-compressed JSON.
 So this module detects what it's looking at, decodes what it can, and lets the caller explore
 the structure by path. It never writes .xpj files.
 """
@@ -36,6 +36,10 @@ def decode(path: Path) -> dict[str, Any]:
     if raw[:2] == GZIP_MAGIC:
         raw = gzip.decompress(raw)
         container = "gzip"
+
+    if raw[:4] == b"MThd":
+        return {"container": container, "format": "midi", "data": None, "text": None,
+                "notes": ["Standard MIDI file. For MPC sequences (.sxq) use read_mpc_sequence."]}
 
     text = _as_text(raw)
     if text is None:
