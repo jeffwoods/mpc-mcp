@@ -11,9 +11,9 @@ State on 2026-11-04. Repo: ~/claudeprojects/mpc-mcp, pushed to github.com/jeffwo
 ## Program builders
 `program.py` builds drum and keygroup programs from blank programs OS 2.15.1 wrote (Coya jam's Program 001 and 002, gzipped in `templates/`). MCP tools: `read_drum_pads`, `build_drum_program`, `read_keygroup_zones`, `build_keygroup_program`.
 - Drums: confirmed on hardware ("Dilla Sketch 4" played). Rebuilding Coya's Urban Kit reproduced the OS's SampleName, SliceEnd and MuteGroup on all 16 pads.
-- Keygroups: `RootNote` = note + 1 (from OS 2.11 expansions); 0 = use the WAV's smpl unity (OS 2.7 expansions). We write the explicit form with KeyTrack True, one instrument per keygroup as the 2.15.1 blank does. Loops set SliceLoop 1 and SliceLoopStart plus LoopStart/LoopEnd; untested on hardware.
+- Keygroups: `RootNote` = note + 1 (from OS 2.11 expansions); 0 = use the WAV's smpl unity (OS 2.7 expansions). We write the explicit form with KeyTrack True, one instrument per keygroup as the 2.15.1 blank does. Loops set SliceLoop 1 and SliceLoopStart plus LoopStart/LoopEnd. Confirmed on hardware ("Dilla Sketch 6"): bass and keys in tune, Taurus sustains on its loop.
 - Keys were silent in Dilla Sketch 3-5 because the Keys track was saved muted: its header was copied from First Project's track 3, which is muted (state byte 07; bit 0 = mute). `retarget_track_header` now clears the mute bit, and `check_project_for_standalone` warns about muted tracks. Keygroup pads in bank A play notes 0-15, so pads only sound when a zone covers those notes (Rhodes starts at 21; use banks C/D).
-- "Dilla Sketch 5" on the card has all three programs built (Taurus and Rhodes zones read from the expansions). Waiting on a hardware test: bass and keys should be in tune and the Taurus should sustain on its loop. They're drier than Dilla Sketch 4 because the copied programs had a Compressor Vintage insert.
+- "Dilla Sketch 6" is the first generated project with all three tracks playing, all programs built (Taurus and Rhodes zones read from the expansions). Drier than Dilla Sketch 4, whose copied programs had a Compressor Vintage insert.
 - Not built: velocity layers (zones_from_program takes the first layer only), insert effects, envelopes other than release.
 
 ## Confirmed .sxq facts (see sequence.py and README)
