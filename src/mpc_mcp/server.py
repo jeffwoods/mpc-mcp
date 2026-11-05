@@ -11,10 +11,11 @@ from typing import Any
 import mido
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from pydantic import BaseModel, Field
 
-from . import check, midifile, project, sequence
+from . import check, midifile, program, project, sequence
 from .midi_io import MidiRig, list_ports
-from .notes import NoteEvent, parse_note
+from .notes import NoteEvent, note_name, parse_note
 from .schedule import build_schedule
 
 INSTRUCTIONS = """\
@@ -31,6 +32,10 @@ Files: write_midi_file is the reliable way to hand the MPC new parts (import the
 inspect_project decodes .xpj and .xpm files read-only; read_mpc_sequence reads the notes in .sxq
 sequence files. The .xpj format is undocumented, so explore
 with outline, find and path rather than assuming a structure. Never edit .xpj files.
+
+Drum programs: read_drum_pads lists which sample sits on which note in an existing kit (an
+expansion's, say); build_drum_program writes a new kit from any WAVs, one per note, from a blank
+program the OS itself wrote. Mix pads from several kits by reading each and picking.
 """
 
 server = MCPServer("mpc", instructions=INSTRUCTIONS)
@@ -230,6 +235,39 @@ def check_project_for_standalone(path: str, os_version: str = "2.15", ram_gb: fl
 def summarize_program(path: str) -> dict[str, Any]:
     """Name, type and sample list for an .xpm drum or keygroup program."""
     return project.summarize_program(Path(path))
+
+
+class DrumPad(BaseModel):
+    note: int | str = Field(description='MIDI note the pad plays, e.g. 36 or "C1". GM drum notes suit sequences and MIDI files.')
+    sample: str = Field(description="Path to a WAV file")
+    mute_group: int = Field(0, description="Pads sharing a group above 0 cut each other off, e.g. 1 for all hi-hats")
+    tune: int = Field(0, description="Semitones")
+
+
+@tool
+def read_drum_pads(path: str) -> list[dict[str, Any]]:
+    """Note, sample path, mute group and tuning for every loaded pad of a drum program (.xpm),
+    using that program's own pad-to-note map. Read-only. Use it to pick sounds out of expansion
+    kits for build_drum_program."""
+    pads = program.pads_from_program(Path(path))
+    return [{"note": n, "note_name": note_name(n), "sample": str(p.sample), "mute_group": p.mute_group, "tune": p.tune}
+            for n, p in sorted(pads.items())]
+
+
+@tool
+def build_drum_program(out_dir: str, name: str, pads: list[DrumPad]) -> dict[str, Any]:
+    """Write a new drum program <name>.Drum.xpm into out_dir (a project's _[ProjectData] folder)
+    and copy its samples in. Each pad's sample goes on the pad the MPC's default map gives that
+    note. Never overwrites. The program still has to be added to the project (its FileList and a
+    track) to show up there."""
+    built = {}
+    for pad in pads:
+        note = parse_note(pad.note)
+        if note in built:
+            raise ValueError(f"note {note} assigned twice")
+        built[note] = program.Pad(Path(pad.sample), pad.mute_group, pad.tune)
+    files = program.write_drum_program(Path(out_dir), name, built)
+    return {"program": files[0], "copied_samples": files[1:], "pads": len(built)}
 
 
 def main() -> None:

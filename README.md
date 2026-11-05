@@ -20,13 +20,15 @@ Not affiliated with or endorsed by Akai Professional. "MPC" and "Akai" are their
 - `scan_mpc_folder`: list projects, programs and sequences on an SD card or USB stick
 - `inspect_project`: read-only exploration of `.xpj`, `.xpm` and other MPC files (outline, path, find)
 - `summarize_program`: name, type and samples of an `.xpm` program
+- `read_drum_pads`: which sample sits on which note in a drum program, such as an expansion kit
+- `build_drum_program`: a new drum program from any WAV files, one per note, with mute groups and tuning. Samples are copied in next to it. Mix sounds from several kits with `read_drum_pads`.
 - `check_project_for_standalone`: before moving a desktop project onto the hardware, checks the saving version against the hardware OS, files missing or outside the project folder, samples that programs need, plugins the hardware may lack, and sample memory against the hardware's RAM
 
 ## What it doesn't do (yet)
 
 - **Write `.xpj` project files.** The format is undocumented and has changed between MPC OS versions. MPC OS 2.10 writes XML (confirmed). Community reports say MPC 3 uses gzip-compressed JSON; others describe it as binary or encrypted. This server reads them defensively and never writes them.
 - **Control the MPC's screen or menus.** There's no remote API for that. Everything goes through MIDI and files.
-- **Create `.xpm` programs.** Planned, once it's tested against programs saved by real hardware.
+- **Create keygroup programs.** Drum programs only so far.
 
 ## Connecting the MPC
 
@@ -66,6 +68,7 @@ From projects saved by MPC OS 2.10 on an MPC Live II:
 - `.sxq`: a standard type 1 MIDI file (960 PPQ), but notes are stored as Akai sequencer-specific meta events, not note-on/off: `47 61 11 <flags> <note> <velocity> 00 00 00 40 <length in 7-bit chunks, low first> 00 00 00 00 00 00 <value>`. OS 2.15.1 saves flags `02` and a value that is usually 100 (seen from 21 to 100, possibly probability). Older files have `00` and `00`. Pad pressure is polyphonic aftertouch. A regular MIDI reader sees no notes.
 - `.sxq` tracks: each starts with a `47 61 10` header. Byte 4 is the track index and byte 5 the track type (`00` drum, `01` keygroup, `03` plugin). It ends with the program name, length-prefixed. The bytes in between vary by OS version. A `47 61 15` event repeats the track index in byte 3. Plugin tracks, and only those, carry a `pytT 03` event before the track name. Confirmed against projects saved by MPC 2.0 and 2.8 as well as OS 2.10.
 - Programs carry their own `Mute` and `Solo`. A soloed program silences every other track, pads included. First Project, the OS 2.10 factory project, ships with its audio program muted and soloed, so anything built from it is silent. `check_project_for_standalone` flags this.
+- Drum programs (OS 2.15.1): instrument N is pad N, and `PadNoteMap` gives each pad's note. The default map (A01 = 37, A02 = 36, A03 = 42 ...) covers all 128 notes; expansion kits often use their own. Loading a sample sets the layer's `SampleName` to the file's stem and `SliceEnd` to its frame count minus 1. `build_drum_program` starts from a blank program saved by OS 2.15.1 and changes only those fields, plus mute group, tuning and filter type.
 - In Controller Mode (OS 2.15.1), the Live II shows up on a Mac as a USB hub with an audio interface, four MIDI ports ("MPC Public", "MPC Private", "MIDI Port A", "MIDI Port B"), and its internal drive and SD card as volumes.
 
 Reports from other models and OS versions are welcome.

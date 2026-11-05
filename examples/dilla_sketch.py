@@ -18,6 +18,7 @@ from xml.sax.saxutils import escape
 
 import mido
 
+from mpc_mcp.program import Pad, pads_from_program, write_drum_program
 from mpc_mcp.sequence import PLUGIN_MARKER, encode_note, retarget_track_header
 
 NAME = "Dilla Sketch"
@@ -26,11 +27,20 @@ BARS = 4
 PPQ = 960
 SIX = PPQ // 4  # one 16th
 
-KIT = ("Vintage Hardware Collection", "Drums-Drumulator.Drum", "Dilla Kit", "Drum")
 BASS = ("Moog Taurus I (1975)", "The Taurus", "Taurus Bass", "Keygroup")
 KEYS = ("Vintage Hardware Collection", "Acoustic-Rhodes A", "Rhodes", "Keygroup")
 
-KICK, SNARE, RIM, CLAP, HAT, OPEN_HAT = 36, 38, 40, 41, 42, 46
+KICK, RIM, SNARE, CLAP, HAT, OPEN_HAT = 36, 37, 38, 39, 42, 46  # GM drum notes
+KIT_NAME = "Dilla Kit"
+HATS = 1  # mute group: the closed hat cuts off the open one
+KIT = {  # our note: (expansion, drum program, that program's note for the sound, mute group)
+    KICK: ("Vintage Hardware Collection", "Drums-Drumulator.Drum", 36, 0),
+    RIM: ("Vintage Hardware Collection", "Drums-Drumulator.Drum", 40, 0),
+    SNARE: ("Vintage Hardware Collection", "Drums-Drumulator.Drum", 38, 0),
+    CLAP: ("Vintage Hardware Collection", "Drums-Drumulator.Drum", 41, 0),
+    HAT: ("Kevin's 808 & 909", "808 One", 44, HATS),
+    OPEN_HAT: ("Kevin's 808 & 909", "808 One", 48, HATS),
+}
 rng = random.Random(1974)
 
 
@@ -171,6 +181,15 @@ def copy_program(expansions: Path, spec: tuple[str, str, str, str], data_dir: Pa
     return copied
 
 
+def build_kit(expansions: Path, data_dir: Path) -> list[str]:
+    """A new drum program from the blank 2.15.1 one, taking each sound from an expansion kit's pads."""
+    pads = {}
+    for note, (folder, kit, source_note, group) in KIT.items():
+        pad = pads_from_program(expansions / folder / f"{kit}.xpm")[source_note]
+        pads[note] = Pad(pad.sample, group, pad.tune)
+    return write_drum_program(data_dir, KIT_NAME, pads)
+
+
 def main(template_xpj: Path, expansions: Path, out_dir: Path, project: str = NAME) -> None:
     tpl_data = template_xpj.with_name(f"{template_xpj.stem}_[ProjectData]")
     xpj = out_dir / f"{project}.xpj"
@@ -180,7 +199,8 @@ def main(template_xpj: Path, expansions: Path, out_dir: Path, project: str = NAM
     data_dir.mkdir()
 
     files = ["All Sequences & Songs.xal"]
-    for spec in (KIT, BASS, KEYS):
+    files += build_kit(expansions, data_dir)
+    for spec in (BASS, KEYS):
         files += copy_program(expansions, spec, data_dir)
     for keep in ("Project Settings.xml", "Midi Controller.mcn"):
         shutil.copyfile(tpl_data / keep, data_dir / keep)
@@ -192,7 +212,7 @@ def main(template_xpj: Path, expansions: Path, out_dir: Path, project: str = NAM
     (data_dir / "All Sequences & Songs.xal").write_text(xal.replace("My 1st sequence", NAME, 1), encoding="utf-8")
 
     build_sequence(tpl_data / "1.sxq", data_dir / "1.sxq", [
-        ("Drums", KIT[2], "Drum", drums()),
+        ("Drums", KIT_NAME, "Drum", drums()),
         ("Bass", BASS[2], "Keygroup", bass()),
         ("Keys", KEYS[2], "Keygroup", keys()),
     ])
