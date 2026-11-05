@@ -1,3 +1,4 @@
+import struct
 import wave
 import xml.etree.ElementTree as ET
 
@@ -76,3 +77,43 @@ def test_round_trip_through_pads_from_program(tmp_path):
     assert {n: (p.sample.name, p.mute_group, p.tune) for n, p in pads.items()} == {36: ("K.wav", 0, 0), 46: ("OH.wav", 2, -3)}
     write_drum_program(again, "Kit", pads)
     assert _instruments(again / "Kit.Drum.xpm")[1] == _instruments(out / "Kit.Drum.xpm")[1]
+
+
+def test_build_keygroup_program(tmp_path):
+    src, out = tmp_path / "src", tmp_path / "out"
+    src.mkdir(), out.mkdir()
+    zones = [program.Zone(_wav(src / f"Keys {n}.wav", 100 + n), n) for n in (60, 48, 72)]
+    zones.append(program.Zone(_wav(src / "Low.wav", 50), 24, low=0, high=30, tune=12, loop_start=10))
+    files = program.write_keygroup_program(out, "Keys", zones, release=0.18)
+    assert files[0] == "Keys.Keygroup.xpm" and len(files) == 5
+    root = ET.parse(out / files[0]).getroot()
+    prog = root.find("Program")
+    assert prog.get("type") == "Keygroup" and prog.findtext("KeygroupNumKeygroups") == "4"
+    got = []
+    for ins in prog.findall("Instruments/Instrument"):
+        layer = ins.find("Layers/Layer")
+        got.append((ins.get("number"), int(ins.findtext("LowNote")), int(ins.findtext("HighNote")), layer.findtext("SampleName"),
+                    int(layer.findtext("RootNote")), layer.findtext("KeyTrack"), int(layer.findtext("TuneCoarse")),
+                    layer.findtext("SliceLoop"), ins.findtext("VolumeRelease")))
+    assert got == [
+        ("1", 0, 30, "Low", 25, "True", 12, "1", "0.180000"),
+        ("2", 31, 54, "Keys 48", 49, "True", 0, "0", "0.180000"),
+        ("3", 55, 66, "Keys 60", 61, "True", 0, "0", "0.180000"),
+        ("4", 67, 127, "Keys 72", 73, "True", 0, "0", "0.180000"),
+    ]
+
+
+def test_zones_round_trip_and_smpl_fallback(tmp_path):
+    src, out = tmp_path / "src", tmp_path / "out"
+    src.mkdir(), out.mkdir()
+    program.write_keygroup_program(out, "K", [program.Zone(_wav(src / "A.wav"), 45, tune=-2, loop_start=7)])
+    zones = program.zones_from_program(out / "K.Keygroup.xpm")
+    assert [(z.sample.name, z.root, z.low, z.high, z.tune, z.loop_start) for z in zones] == [("A.wav", 45, 0, 127, -2, 7)]
+    # RootNote 0 means "use the WAV's smpl unity note", as in OS 2.7 expansions
+    text = (out / "K.Keygroup.xpm").read_text().replace("<RootNote>46</RootNote>", "<RootNote>0</RootNote>")
+    (out / "K.Keygroup.xpm").write_text(text)
+    wav = (out / "A.wav").read_bytes()
+    smpl = b"smpl" + struct.pack("<I", 36) + struct.pack("<9I", 0, 0, 22675, 62, 0, 0, 0, 0, 0)
+    (out / "A.wav").write_bytes(wav[:4] + struct.pack("<I", len(wav) - 8 + len(smpl)) + wav[8:12] + smpl + wav[12:])
+    assert program.zones_from_program(out / "K.Keygroup.xpm")[0].root == 62
+    assert program.wav_info(out / "A.wav") == (1000, 62)

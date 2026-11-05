@@ -1,15 +1,21 @@
-"""Build drum programs (.xpm) from samples.
+"""Build drum and keygroup programs (.xpm) from samples.
 
-Every program starts from a blank drum program that MPC OS 2.15.1 wrote itself (Program 001 in a
-real project), so every field the OS expects is there with the OS's own defaults. Copying
-expansion or factory programs instead brings their settings along; First Project's soloed audio
-program made every project built from it silent.
+Every program starts from a blank program that MPC OS 2.15.1 wrote itself (Program 001 and
+Program 002 in a real project), so every field the OS expects is there with the OS's own
+defaults. Copying expansion or factory programs instead brings their settings along; First
+Project's soloed audio program made every project built from it silent.
 
-In a 2.x drum program, Instrument N is pad N, and PadNoteMap gives each pad's MIDI note. The
-blank's map is the MPC default (pad A01 = 37, A02 = 36, A03 = 42 ...), which covers all 128 notes.
-Loading a sample on a pad sets SampleName to the file's stem and SliceEnd to its last frame
-(frame count - 1), as the OS does. Pads are given by note, so a sequence or MIDI file playing
-GM drum notes hits the samples assigned to those notes.
+Drum programs: Instrument N is pad N, and PadNoteMap gives each pad's MIDI note. The blank's map
+is the MPC default (pad A01 = 37, A02 = 36, A03 = 42 ...), which covers all 128 notes. Loading a
+sample on a pad sets SampleName to the file's stem and SliceEnd to its last frame (frame count
+- 1), as the OS does. Pads are given by note, so a sequence or MIDI file playing GM drum notes
+hits the samples assigned to those notes.
+
+Keygroup programs: one Instrument per keygroup, numbered from 1, each with a LowNote-HighNote
+range, and KeygroupNumKeygroups says how many (the blank has one). A layer's RootNote is the MIDI
+note the sample sounds at its own pitch, plus 1; 0 means "use the WAV's smpl unity note". OS 2.11
+expansions use the +1 form (sample "Atari(36)" alone on key 36 has RootNote 37, while its smpl
+unity is a placeholder 60); OS 2.7 ones use 0 and real unity notes. We write the explicit form.
 """
 
 from __future__ import annotations
@@ -25,7 +31,9 @@ from xml.sax.saxutils import escape
 
 from . import project
 
-BLANK_DRUM = Path(__file__).with_name("templates") / "blank-2.15.1.Drum.xpm.gz"
+TEMPLATES = Path(__file__).with_name("templates")
+BLANK_DRUM = TEMPLATES / "blank-2.15.1.Drum.xpm.gz"
+BLANK_KEYGROUP = TEMPLATES / "blank-2.15.1.Keygroup.xpm.gz"
 INSTRUMENT = re.compile(r'(<Instrument number="(\d+)">)(.*?)(</Instrument>)', re.S)
 
 
@@ -36,8 +44,22 @@ class Pad:
     tune: int = 0  # semitones
 
 
+@dataclass
+class Zone:
+    sample: Path
+    root: int  # the MIDI note the sample sounds at its own pitch
+    low: int | None = None  # key range; None splits the keyboard halfway between neighbouring roots
+    high: int | None = None
+    tune: int = 0  # semitones, on top of the root
+    loop_start: int | None = None  # frame to loop back to from the end while a key is held
+
+
 def blank_drum() -> str:
     return gzip.decompress(BLANK_DRUM.read_bytes()).decode("utf-8")
+
+
+def blank_keygroup() -> str:
+    return gzip.decompress(BLANK_KEYGROUP.read_bytes()).decode("utf-8")
 
 
 def _pad_notes(text: str) -> dict[int, int]:
@@ -46,30 +68,33 @@ def _pad_notes(text: str) -> dict[int, int]:
     return {int(p.get("number")): int(p.findtext("Note")) for p in root.iter("PadNote")}
 
 
-def wav_frames(path: Path) -> int:
-    """Frame count from the RIFF header. Reads the chunks directly so any WAV encoding works,
-    float and extensible included."""
+def wav_info(path: Path) -> tuple[int, int | None]:
+    """(frame count, smpl unity note or None) from the RIFF headers. Reads the chunks directly so
+    any WAV encoding works, float and extensible included."""
+    block_align, unity = None, None
     with open(path, "rb") as f:
         head = f.read(12)
         if head[:4] != b"RIFF" or head[8:12] != b"WAVE":
-            raise ValueError(f"{path.name} isn't a WAV file; only WAV samples are supported")
-        block_align = None
-        while chunk := f.read(8):
-            if len(chunk) < 8:
-                break
+            raise ValueError(f"{Path(path).name} isn't a WAV file; only WAV samples are supported")
+        while len(chunk := f.read(8)) == 8:
             cid, size = chunk[:4], struct.unpack("<I", chunk[4:])[0]
             if cid == b"fmt ":
-                fmt = f.read(size)
-                block_align = struct.unpack("<H", fmt[12:14])[0]
-                if size % 2:
-                    f.read(1)
+                block_align = struct.unpack("<H", f.read(size)[12:14])[0]
+                f.seek(size % 2, 1)
+            elif cid == b"smpl" and size >= 36:
+                unity = struct.unpack("<9I", f.read(36))[3]
+                f.seek(size - 36 + size % 2, 1)
             elif cid == b"data":
                 if not block_align:
-                    raise ValueError(f"{path.name}: data chunk before fmt chunk")
-                return size // block_align
+                    raise ValueError(f"{Path(path).name}: data chunk before fmt chunk")
+                return size // block_align, unity
             else:
                 f.seek(size + size % 2, 1)
-    raise ValueError(f"{path.name}: no audio data found")
+    raise ValueError(f"{Path(path).name}: no audio data found")
+
+
+def wav_frames(path: Path) -> int:
+    return wav_info(path)[0]
 
 
 def _set(block: str, tag: str, value: str) -> str:
@@ -110,38 +135,130 @@ def drum_program_xml(name: str, pads: dict[int, tuple[str, int, Pad]]) -> str:
     return re.sub(r"<ProgramName>[^<]*</ProgramName>", lambda _: f"<ProgramName>{escape(name)}</ProgramName>", text, count=1)
 
 
+def _target(out_dir: Path, name: str, kind: str) -> Path:
+    target = Path(out_dir).expanduser() / f"{name}.{kind}.xpm"
+    if target.exists():
+        raise FileExistsError(f"{target} already exists; not overwriting")
+    return target
+
+
+def _copy_samples(out_dir: Path, samples: list[Path]) -> tuple[dict[Path, tuple[str, int]], list[str]]:
+    """Copy each WAV into out_dir once. Returns {source: (sample name, frames)} and the files
+    written. A name taken by a different file gets a number added; never overwrites."""
+    out_dir = Path(out_dir).expanduser()
+    taken = {f.stem.lower(): f for f in out_dir.iterdir() if f.suffix.lower() in project.AUDIO}
+    copied: dict[Path, tuple[str, int]] = {}
+    written = []
+    for sample in samples:
+        src = Path(sample).expanduser().resolve()
+        if src in copied:
+            continue
+        frames = wav_frames(src)
+        stem, n = src.stem, 2
+        while stem.lower() in taken and not _same_file(taken[stem.lower()], src):
+            stem, n = f"{src.stem} {n}", n + 1
+        dest = out_dir / f"{stem}{src.suffix}"
+        if not dest.exists():
+            shutil.copyfile(src, dest)
+            written.append(dest.name)
+        taken[stem.lower()] = dest
+        copied[src] = (stem, frames)
+    return copied, written
+
+
 def write_drum_program(out_dir: Path, name: str, pads: dict[int, Pad]) -> list[str]:
     """Write <name>.Drum.xpm into out_dir (a project's _[ProjectData] folder) and copy its samples
     in next to it. Returns the file names written, program first. Never overwrites: a program
     that already exists is an error, and a sample whose name is taken by a different file is
     copied under a new name."""
-    out_dir = Path(out_dir).expanduser()
-    target = out_dir / f"{name}.Drum.xpm"
-    if target.exists():
-        raise FileExistsError(f"{target} already exists; not overwriting")
-    taken = {f.stem.lower(): f for f in out_dir.iterdir() if f.suffix.lower() in project.AUDIO}
-    copied: dict[Path, str] = {}
-    entries, written = {}, []
-    for note, pad in sorted(pads.items()):
-        src = Path(pad.sample).expanduser().resolve()
-        frames = wav_frames(src)
-        if src not in copied:
-            stem, n = src.stem, 2
-            while stem.lower() in taken and not _same_file(taken[stem.lower()], src):
-                stem, n = f"{src.stem} {n}", n + 1
-            dest = out_dir / f"{stem}{src.suffix}"
-            if not dest.exists():
-                shutil.copyfile(src, dest)
-                written.append(dest.name)
-            taken[stem.lower()] = dest
-            copied[src] = stem
-        entries[note] = (copied[src], frames, pad)
+    target = _target(out_dir, name, "Drum")
+    pads = dict(sorted(pads.items()))
+    copied, written = _copy_samples(out_dir, [p.sample for p in pads.values()])
+    entries = {note: (*copied[Path(p.sample).expanduser().resolve()], p) for note, p in pads.items()}
     target.write_bytes(drum_program_xml(name, entries).encode("utf-8"))
+    return [target.name, *written]
+
+
+def _ranges(zones: list[Zone]) -> list[tuple[int, int]]:
+    """Key ranges: given ones kept, missing edges meet the neighbour's edge, or split halfway
+    between neighbouring roots."""
+    out: list[tuple[int, int]] = []
+    for i, z in enumerate(zones):
+        low = z.low if z.low is not None else 0 if i == 0 else out[i - 1][1] + 1
+        if z.high is not None:
+            high = z.high
+        elif i == len(zones) - 1:
+            high = 127
+        else:
+            nxt = zones[i + 1]
+            high = nxt.low - 1 if nxt.low is not None else (z.root + nxt.root) // 2
+        if not 0 <= low <= high <= 127:
+            raise ValueError(f"zone for {Path(z.sample).name} has an empty or out-of-range key range {low}-{high}")
+        out.append((low, high))
+    return out
+
+
+def _load_zone(block: str, sample_name: str, frames: int, zone: Zone, low: int, high: int,
+               release: float | None) -> str:
+    head, layers = block.split("<Layers>", 1)
+    head = _set(head, "LowNote", str(low))
+    head = _set(head, "HighNote", str(high))
+    head = _set(head, "FilterType", "0")
+    if release is not None:
+        head = _set(head, "VolumeRelease", f"{release:.6f}")
+    first, rest = layers.split("</Layer>", 1)
+    first = _set(first, "TuneCoarse", str(zone.tune))
+    first = _set(first, "RootNote", str(zone.root + 1))
+    first = _set(first, "KeyTrack", "True")
+    first = _set(first, "SampleName", escape(sample_name))
+    first = _set(first, "SliceEnd", str(max(frames - 1, 0)))
+    if zone.loop_start is not None:
+        first = _set(first, "LoopStart", str(zone.loop_start))
+        first = _set(first, "LoopEnd", str(max(frames - 1, 0)))
+        first = _set(first, "SliceLoopStart", str(zone.loop_start))
+        first = _set(first, "SliceLoop", "1")
+    return f"{head}<Layers>{first}</Layer>{rest}"
+
+
+def keygroup_program_xml(name: str, zones: list[tuple[str, int, Zone]], release: float | None = None) -> str:
+    """zones: (sample name, frame count, Zone), sorted by root."""
+    if not 1 <= len(zones) <= 128:
+        raise ValueError("a keygroup program needs 1 to 128 zones")
+    for z in zones:
+        if not 0 <= z[2].root <= 127:
+            raise ValueError(f"root note {z[2].root} is out of range 0-127")
+    text = blank_keygroup()
+    blocks = INSTRUMENT.findall(text)
+    if len(blocks) != 1:
+        raise ValueError("blank keygroup program should have exactly one instrument")
+    _, _, body, _ = blocks[0]
+    ranges = _ranges([z for _, _, z in zones])
+    built = "\n      ".join(
+        f'<Instrument number="{i}">{_load_zone(body, s, frames, z, low, high, release)}</Instrument>'
+        for i, ((s, frames, z), (low, high)) in enumerate(zip(zones, ranges), start=1))
+    text = INSTRUMENT.sub(lambda _: built, text, count=1)
+    text = _set(text, "KeygroupNumKeygroups", str(len(zones)))
+    return re.sub(r"<ProgramName>[^<]*</ProgramName>", lambda _: f"<ProgramName>{escape(name)}</ProgramName>", text, count=1)
+
+
+def write_keygroup_program(out_dir: Path, name: str, zones: list[Zone], release: float | None = None) -> list[str]:
+    """Write <name>.Keygroup.xpm into out_dir and copy its samples in, one keygroup per zone.
+    release sets every keygroup's volume release (0-1, as the MPC stores it; the blank's is 0,
+    an instant cut on key up). Returns the file names written, program first. Never overwrites."""
+    target = _target(out_dir, name, "Keygroup")
+    zones = sorted(zones, key=lambda z: (z.root, z.low if z.low is not None else -1))
+    copied, written = _copy_samples(out_dir, [z.sample for z in zones])
+    entries = [(*copied[Path(z.sample).expanduser().resolve()], z) for z in zones]
+    target.write_bytes(keygroup_program_xml(name, entries, release).encode("utf-8"))
     return [target.name, *written]
 
 
 def _same_file(a: Path, b: Path) -> bool:
     return a.stat().st_size == b.stat().st_size and a.read_bytes() == b.read_bytes()
+
+
+def _audio_files(folder: Path) -> dict[str, Path]:
+    return {f.stem.lower(): f for f in folder.iterdir() if f.suffix.lower() in project.AUDIO and not f.name.startswith(".")}
 
 
 def pads_from_program(xpm: Path) -> dict[int, Pad]:
@@ -155,8 +272,7 @@ def pads_from_program(xpm: Path) -> dict[int, Pad]:
     if prog is None or prog.get("type") != "Drum":
         raise ValueError(f"{xpm.name} isn't a drum program")
     notes = _pad_notes(text)
-    files = {f.stem.lower(): f for f in xpm.parent.iterdir()
-             if f.suffix.lower() in project.AUDIO and not f.name.startswith(".")}
+    files = _audio_files(xpm.parent)
     pads: dict[int, Pad] = {}
     for ins in prog.iter("Instrument"):
         names = [(l.findtext("SampleName") or "").strip() for l in ins.iter("Layer")]
@@ -169,3 +285,33 @@ def pads_from_program(xpm: Path) -> dict[int, Pad]:
         pads[notes[number]] = Pad(files[sample.lower()], int(ins.findtext("MuteGroup") or 0),
                                   int(ins.findtext("TuneCoarse") or 0))
     return pads
+
+
+def zones_from_program(xpm: Path) -> list[Zone]:
+    """The zones of an existing keygroup program (an expansion's, say): sample, root note, key
+    range, tuning and loop. A RootNote of 0 falls back to the WAV's smpl unity note, then to 60.
+    Only the first layer with a sample is taken, so velocity layers collapse to one."""
+    xpm = Path(xpm).expanduser()
+    prog = ET.fromstring(project.xml_text(xpm)).find("Program")
+    if prog is None or prog.get("type") != "Keygroup":
+        raise ValueError(f"{xpm.name} isn't a keygroup program")
+    count = int(prog.findtext("KeygroupNumKeygroups") or 0)
+    files = _audio_files(xpm.parent)
+    zones = []
+    for ins in list(prog.iter("Instrument"))[:count]:
+        layer = next((l for l in ins.iter("Layer") if (l.findtext("SampleName") or "").strip()), None)
+        if layer is None:
+            continue
+        sample = layer.findtext("SampleName").strip()
+        if sample.lower() not in files:
+            raise FileNotFoundError(f"{xpm.name} keygroup {ins.get('number')} uses {sample!r}, which isn't in {xpm.parent}")
+        path = files[sample.lower()]
+        root = int(layer.findtext("RootNote") or 0) - 1
+        if root < 0:
+            root = wav_info(path)[1] if path.suffix.lower() == ".wav" else None
+            root = 60 if root is None else root
+        looped = (layer.findtext("SliceLoop") or "0") != "0" or layer.findtext("Loop") == "True"
+        zones.append(Zone(path, root, int(ins.findtext("LowNote")), int(ins.findtext("HighNote")),
+                          int(layer.findtext("TuneCoarse") or 0),
+                          int(layer.findtext("SliceLoopStart") or layer.findtext("LoopStart") or 0) if looped else None))
+    return zones

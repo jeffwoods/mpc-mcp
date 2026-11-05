@@ -18,7 +18,7 @@ from xml.sax.saxutils import escape
 
 import mido
 
-from mpc_mcp.program import Pad, pads_from_program, write_drum_program
+from mpc_mcp.program import Pad, pads_from_program, write_drum_program, write_keygroup_program, zones_from_program
 from mpc_mcp.sequence import PLUGIN_MARKER, encode_note, retarget_track_header
 
 NAME = "Dilla Sketch"
@@ -27,8 +27,9 @@ BARS = 4
 PPQ = 960
 SIX = PPQ // 4  # one 16th
 
-BASS = ("Moog Taurus I (1975)", "The Taurus", "Taurus Bass", "Keygroup")
-KEYS = ("Vintage Hardware Collection", "Acoustic-Rhodes A", "Rhodes", "Keygroup")
+# (program name, expansion, keygroup program to take the zones from, volume release)
+BASS = ("Taurus Bass", "Moog Taurus I (1975)", "The Taurus", 0.1)
+KEYS = ("Rhodes", "Vintage Hardware Collection", "Acoustic-Rhodes A", 0.18)
 
 KICK, RIM, SNARE, CLAP, HAT, OPEN_HAT = 36, 37, 38, 39, 42, 46  # GM drum notes
 KIT_NAME = "Dilla Kit"
@@ -164,21 +165,10 @@ def unsolo(text: str) -> str:
     return text.replace("<Solo>True</Solo>", "<Solo>False</Solo>")
 
 
-def copy_program(expansions: Path, spec: tuple[str, str, str, str], data_dir: Path) -> list[str]:
-    folder, source, name, kind = spec
-    src_dir = expansions / folder
-    text = (src_dir / f"{source}.xpm").read_text(encoding="utf-8")
-    text = unsolo(re.sub(r"<ProgramName>[^<]*</ProgramName>", f"<ProgramName>{name}</ProgramName>", text, count=1))
-    target = data_dir / f"{name}.{kind}.xpm"
-    target.write_text(text, encoding="utf-8")
-    samples = sorted(set(re.findall(r"<SampleName>([^<]+)</SampleName>", text)))
-    files = {f.stem.lower(): f for f in src_dir.iterdir() if f.suffix.lower() in (".wav", ".aif", ".aiff")}
-    copied = [target.name]
-    for s in samples:
-        f = files[s.strip().lower()]
-        shutil.copyfile(f, data_dir / f.name)
-        copied.append(f.name)
-    return copied
+def build_keygroups(expansions: Path, spec: tuple[str, str, str, float], data_dir: Path) -> list[str]:
+    """A new keygroup program from the blank 2.15.1 one, with an expansion program's zones."""
+    name, folder, source, release = spec
+    return write_keygroup_program(data_dir, name, zones_from_program(expansions / folder / f"{source}.xpm"), release)
 
 
 def build_kit(expansions: Path, data_dir: Path) -> list[str]:
@@ -201,7 +191,7 @@ def main(template_xpj: Path, expansions: Path, out_dir: Path, project: str = NAM
     files = ["All Sequences & Songs.xal"]
     files += build_kit(expansions, data_dir)
     for spec in (BASS, KEYS):
-        files += copy_program(expansions, spec, data_dir)
+        files += build_keygroups(expansions, spec, data_dir)
     for keep in ("Project Settings.xml", "Midi Controller.mcn"):
         shutil.copyfile(tpl_data / keep, data_dir / keep)
     audio = (tpl_data / "Audio 001.Audio.xpm").read_bytes().decode("utf-8")
@@ -213,8 +203,8 @@ def main(template_xpj: Path, expansions: Path, out_dir: Path, project: str = NAM
 
     build_sequence(tpl_data / "1.sxq", data_dir / "1.sxq", [
         ("Drums", KIT_NAME, "Drum", drums()),
-        ("Bass", BASS[2], "Keygroup", bass()),
-        ("Keys", KEYS[2], "Keygroup", keys()),
+        ("Bass", BASS[0], "Keygroup", bass()),
+        ("Keys", KEYS[0], "Keygroup", keys()),
     ])
 
     text = template_xpj.read_bytes().decode("utf-8")

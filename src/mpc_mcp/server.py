@@ -33,9 +33,10 @@ inspect_project decodes .xpj and .xpm files read-only; read_mpc_sequence reads t
 sequence files. The .xpj format is undocumented, so explore
 with outline, find and path rather than assuming a structure. Never edit .xpj files.
 
-Drum programs: read_drum_pads lists which sample sits on which note in an existing kit (an
-expansion's, say); build_drum_program writes a new kit from any WAVs, one per note, from a blank
-program the OS itself wrote. Mix pads from several kits by reading each and picking.
+Programs: read_drum_pads and read_keygroup_zones list the samples in an existing program (an
+expansion's, say). build_drum_program and build_keygroup_program write new ones from any WAVs,
+starting from blank programs the OS itself wrote. Mix sounds from several programs by reading
+each and picking. A new program still has to be added to a project to show up there.
 """
 
 server = MCPServer("mpc", instructions=INSTRUCTIONS)
@@ -268,6 +269,36 @@ def build_drum_program(out_dir: str, name: str, pads: list[DrumPad]) -> dict[str
         built[note] = program.Pad(Path(pad.sample), pad.mute_group, pad.tune)
     files = program.write_drum_program(Path(out_dir), name, built)
     return {"program": files[0], "copied_samples": files[1:], "pads": len(built)}
+
+
+class KeyZone(BaseModel):
+    sample: str = Field(description="Path to a WAV file")
+    root: int | str = Field(description='Note the sample sounds at its own pitch, e.g. 48 or "C3"')
+    low: int | str | None = Field(None, description="Lowest key; omit to split halfway between neighbouring roots")
+    high: int | str | None = Field(None, description="Highest key; omit to split halfway between neighbouring roots")
+    tune: int = Field(0, description="Semitones on top of the root")
+    loop_start: int | None = Field(None, description="Frame to loop back to while a key is held; omit for no loop")
+
+
+@tool
+def read_keygroup_zones(path: str) -> list[dict[str, Any]]:
+    """Sample path, root note, key range, tuning and loop for every keygroup of a keygroup program
+    (.xpm). Read-only. Use it to reuse an expansion instrument's samples in build_keygroup_program."""
+    return [{"sample": str(z.sample), "root": z.root, "root_name": note_name(z.root), "low": z.low, "high": z.high,
+             "tune": z.tune, "loop_start": z.loop_start} for z in program.zones_from_program(Path(path))]
+
+
+@tool
+def build_keygroup_program(out_dir: str, name: str, zones: list[KeyZone], release: float | None = None) -> dict[str, Any]:
+    """Write a new keygroup program <name>.Keygroup.xpm into out_dir (a project's _[ProjectData]
+    folder) and copy its samples in, one keygroup per zone (up to 128). release is the volume
+    release for every keygroup, 0-1 as the MPC stores it (0.1 to 0.2 is a natural fade; the
+    default 0 cuts off on key up). Never overwrites."""
+    built = [program.Zone(Path(z.sample), parse_note(z.root),
+                          None if z.low is None else parse_note(z.low),
+                          None if z.high is None else parse_note(z.high), z.tune, z.loop_start) for z in zones]
+    files = program.write_keygroup_program(Path(out_dir), name, built, release)
+    return {"program": files[0], "copied_samples": files[1:], "keygroups": len(built)}
 
 
 def main() -> None:
