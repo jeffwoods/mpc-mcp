@@ -17,6 +17,9 @@ State on 2026-11-04. Repo: ~/claudeprojects/mpc-mcp, pushed to github.com/jeffwo
 - Keygroup pads: the builder rotates PadNoteMap so pad 1 is the first C the keygroups cover (Rhodes: bank A = 24-39). Confirmed on hardware: OS 2.15.1 honours a keygroup PadNoteMap ("Dilla Sketch 7" bank A plays the Rhodes).
 - Not built: velocity layers (zones_from_program takes the first layer only), insert effects, envelopes other than release.
 
+## Project writer
+`song.write_project(template_xpj, out_dir, name, tracks, bpm, bars)` writes programs, the sequence and the .xpj. Every track header is cloned from the template's first track, so any track count works. `examples/dilla_sketch.py` now uses it and rebuilds Dilla Sketch 7 byte for byte, apart from the bass track's state byte (06 instead of 0e). `examples/christmastime.py` writes "Christmastime Karaoke" (6 tracks, 113 bars, B, 95 BPM): chords and form from a chord sheet, bar counts inferred, about a minute longer than the record. Awaiting a hardware test. Bars over 127 are untested (the bar count may be a 7-bit pair). Next: expose write_project as an MCP tool.
+
 ## Confirmed .sxq facts (see sequence.py and README)
 - Track header `47 61 10`: byte 4 is the track index, byte 5 the type (00 drum, 01 keygroup, 03 plugin), and it ends with a length-prefixed program name. `47 61 15` repeats the index in byte 3. `pytT 03` appears on plugin tracks only. The byte before `00 64 00 00 00 00 00` is track state; bit 0 = mute (confirmed). Bit 3 (0x08, set on First Project's track 2) is unknown; that track played.
 - OS 2.15.1 writes notes as `47 61 11 02 ... <byte 19 = 100>`; older files write `00 ... 00`. Untested whether 2.15 plays the old form; the encoder writes the 2.15 form.

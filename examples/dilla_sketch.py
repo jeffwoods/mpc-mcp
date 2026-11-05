@@ -3,23 +3,17 @@
 Usage: python examples/dilla_sketch.py <template.xpj> <expansions dir> <output dir> [project name]
 
 Writes <output dir>/<project name>.xpj (default "Dilla Sketch") and its _[ProjectData] folder. Never modifies the template.
-Track-to-program links, bar count and note events follow the .sxq layout documented in the README
-and in mpc_mcp.sequence.
+The project itself is written by mpc_mcp.song.write_project.
 """
 
 from __future__ import annotations
 
 import random
-import re
-import shutil
 import sys
 from pathlib import Path
-from xml.sax.saxutils import escape
 
-import mido
-
-from mpc_mcp.program import Pad, pads_from_program, write_drum_program, write_keygroup_program, zones_from_program
-from mpc_mcp.sequence import PLUGIN_MARKER, encode_note, retarget_track_header
+from mpc_mcp.program import Pad, pads_from_program, zones_from_program
+from mpc_mcp.song import Note, Track, write_project
 
 NAME = "Dilla Sketch"
 BPM = 88
@@ -106,115 +100,24 @@ def bass() -> list[tuple[int, int, int, int]]:
     return ev
 
 
-def build_sequence(template: Path, out: Path, parts: list[tuple[str, str, str, list]]) -> None:
-    src = mido.MidiFile(template)
-    mid = mido.MidiFile(type=1, ticks_per_beat=src.ticks_per_beat)
-    head = mido.MidiTrack()
-    for msg in src.tracks[0]:
-        if msg.type == "track_name":
-            msg = msg.copy(name=NAME + "\x00")
-        elif msg.type == "set_tempo":
-            msg = msg.copy(tempo=mido.bpm2tempo(BPM))
-        elif msg.type == "sequencer_specific" and bytes(msg.data[:3]) == b"Ga\x00":
-            data = list(msg.data)
-            data[4], data[8] = BARS, BARS + 1
-            msg = msg.copy(data=data)
-        head.append(msg)
-    mid.tracks.append(head)
+def main(template_xpj: Path, expansions: Path, out_dir: Path, project: str = NAME) -> None:
+    def notes(events):
+        return [Note(tick / PPQ, note, vel, length / PPQ) for tick, note, vel, length in events]
 
-    for index, (track_name, program, kind, events) in enumerate(parts):
-        tpl = src.tracks[1 + index]
-        track = mido.MidiTrack()
-        if kind == "Plugin":
-            track.append(mido.MetaMessage("sequencer_specific", data=list(PLUGIN_MARKER)))
-        for msg in tpl:
-            if msg.type == "track_name":
-                track.append(msg.copy(name=track_name + "\x00", time=0))
-            elif msg.type == "sequencer_specific" and bytes(msg.data[:3]) == b"Ga\x10":
-                track.append(msg.copy(data=list(retarget_track_header(bytes(msg.data), index, kind, program)), time=0))
-            elif msg.type == "sequencer_specific" and bytes(msg.data[:3]) == b"Ga\x15":
-                track.append(msg.copy(data=[*msg.data[:3], index, *msg.data[4:]], time=0))
-            elif msg.type == "sequencer_specific" and bytes(msg.data[:4]) == b"pytT":
-                continue  # plugin-only marker; added above when needed
-            elif msg.type == "sequencer_specific" and bytes(msg.data[:3]) == b"Ga\x11":
-                break  # template notes start here; ours replace them
-            elif msg.type in ("polytouch", "end_of_track"):
-                continue
-            else:
-                track.append(msg.copy(time=0))
-        now = 0
-        for tick, note, vel, length in sorted(events):
-            tick = max(tick, 0)
-            track.append(mido.MetaMessage("sequencer_specific", data=list(encode_note(note, vel, length)), time=tick - now))
-            now = tick
-        track.append(mido.MetaMessage("end_of_track", time=0))
-        mid.tracks.append(track)
+    def zones(spec):
+        _, folder, source, _ = spec
+        return zones_from_program(expansions / folder / f"{source}.xpm")
 
-    for program in [p for _, p, _, _ in parts] + ["Audio 001"]:
-        name = program.encode()
-        data = [0x47, 0x61, 0x13, len(name) + 2, 0x00, *name, 0, 0]
-        mid.tracks.append(mido.MidiTrack([mido.MetaMessage("sequencer_specific", data=data),
-                                          mido.MetaMessage("end_of_track")]))
-    mid.save(out)
-
-
-def unsolo(text: str) -> str:
-    """Clear program-level mute and solo. First Project's audio program is saved muted and soloed,
-    which silences every other track, pads included."""
-    text = text.replace("<Mute>True</Mute>", "<Mute>False</Mute>")
-    return text.replace("<Solo>True</Solo>", "<Solo>False</Solo>")
-
-
-def build_keygroups(expansions: Path, spec: tuple[str, str, str, float], data_dir: Path) -> list[str]:
-    """A new keygroup program from the blank 2.15.1 one, with an expansion program's zones."""
-    name, folder, source, release = spec
-    return write_keygroup_program(data_dir, name, zones_from_program(expansions / folder / f"{source}.xpm"), release)
-
-
-def build_kit(expansions: Path, data_dir: Path) -> list[str]:
-    """A new drum program from the blank 2.15.1 one, taking each sound from an expansion kit's pads."""
     pads = {}
     for note, (folder, kit, source_note, group) in KIT.items():
         pad = pads_from_program(expansions / folder / f"{kit}.xpm")[source_note]
         pads[note] = Pad(pad.sample, group, pad.tune)
-    return write_drum_program(data_dir, KIT_NAME, pads)
-
-
-def main(template_xpj: Path, expansions: Path, out_dir: Path, project: str = NAME) -> None:
-    tpl_data = template_xpj.with_name(f"{template_xpj.stem}_[ProjectData]")
-    xpj = out_dir / f"{project}.xpj"
-    data_dir = out_dir / f"{project}_[ProjectData]"
-    if xpj.exists() or data_dir.exists():
-        sys.exit(f"{xpj} already exists; not overwriting")
-    data_dir.mkdir()
-
-    files = ["All Sequences & Songs.xal"]
-    files += build_kit(expansions, data_dir)
-    for spec in (BASS, KEYS):
-        files += build_keygroups(expansions, spec, data_dir)
-    for keep in ("Project Settings.xml", "Midi Controller.mcn"):
-        shutil.copyfile(tpl_data / keep, data_dir / keep)
-    audio = (tpl_data / "Audio 001.Audio.xpm").read_bytes().decode("utf-8")
-    (data_dir / "Audio 001.Audio.xpm").write_bytes(unsolo(audio).encode("utf-8"))
-    files.append("Audio 001.Audio.xpm")
-
-    xal = (tpl_data / "All Sequences & Songs.xal").read_text(encoding="utf-8")
-    (data_dir / "All Sequences & Songs.xal").write_text(xal.replace("My 1st sequence", NAME, 1), encoding="utf-8")
-
-    build_sequence(tpl_data / "1.sxq", data_dir / "1.sxq", [
-        ("Drums", KIT_NAME, "Drum", drums()),
-        ("Bass", BASS[0], "Keygroup", bass()),
-        ("Keys", KEYS[0], "Keygroup", keys()),
-    ])
-
-    text = template_xpj.read_bytes().decode("utf-8")
-    nl = "\r\n" if "\r\n" in text else "\n"
-    listing = nl.join(f"    <File>{escape(f'./{data_dir.name}/{f}')}</File>" for f in files)
-    text = re.sub(r"<FileList>.*?</FileList>", lambda _: f"<FileList>{nl}{listing}{nl}  </FileList>", text, flags=re.S)
-    text = re.sub(r"<BPM>[^<]*</BPM>", f"<BPM>{BPM:.6f}</BPM>", text)
-    text = re.sub(r"<MasterTempo.Value>[^<]*</MasterTempo.Value>", f"<MasterTempo.Value>{BPM:.6f}</MasterTempo.Value>", text)
-    xpj.write_bytes(text.encode("utf-8"))
-    print(xpj)
+    tracks = [
+        Track("Drums", KIT_NAME, notes(drums()), pads=pads),
+        Track("Bass", BASS[0], notes(bass()), zones=zones(BASS), release=BASS[3]),
+        Track("Keys", KEYS[0], notes(keys()), zones=zones(KEYS), release=KEYS[3]),
+    ]
+    print(write_project(template_xpj, out_dir, project, tracks, BPM, BARS))
 
 
 if __name__ == "__main__":

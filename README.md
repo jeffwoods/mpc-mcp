@@ -24,6 +24,7 @@ Not affiliated with or endorsed by Akai Professional. "MPC" and "Akai" are their
 - `build_drum_program`: a new drum program from any WAV files, one per note, with mute groups and tuning. Samples are copied in next to it. Mix sounds from several kits with `read_drum_pads`.
 - `read_keygroup_zones`: sample, root note, key range, tuning and loop for each keygroup of a keygroup program
 - `build_keygroup_program`: a new keygroup program from WAV files, one keygroup per sample with its root note. Key ranges can be left out and split between neighbouring roots. Pad bank A starts on the first C the keygroups cover.
+- `mpc_mcp.song.write_project` (Python, not yet an MCP tool): a whole new project from a template project: any number of drum and keygroup tracks with their programs and notes, tempo and length. See `examples/`.
 - `check_project_for_standalone`: before moving a desktop project onto the hardware, checks the saving version against the hardware OS, files missing or outside the project folder, samples that programs need, plugins the hardware may lack, muted or soloed programs and tracks, and sample memory against the hardware's RAM
 
 ## What it doesn't do (yet)
