@@ -1,8 +1,8 @@
 """Build a 4-bar boom-bap sketch as a new MPC project, using an existing 2.x project as a template.
 
-Usage: python examples/dilla_sketch.py <template.xpj> <expansions dir> <output dir>
+Usage: python examples/dilla_sketch.py <template.xpj> <expansions dir> <output dir> [project name]
 
-Writes <output dir>/Dilla Sketch.xpj and its _[ProjectData] folder. Never modifies the template.
+Writes <output dir>/<project name>.xpj (default "Dilla Sketch") and its _[ProjectData] folder. Never modifies the template.
 Track-to-program links, bar count and note events follow the .sxq layout documented in the README
 and in mpc_mcp.sequence.
 """
@@ -18,7 +18,7 @@ from xml.sax.saxutils import escape
 
 import mido
 
-from mpc_mcp.sequence import PLUGIN_MARKER, retarget_track_header
+from mpc_mcp.sequence import PLUGIN_MARKER, encode_note, retarget_track_header
 
 NAME = "Dilla Sketch"
 BPM = 88
@@ -95,11 +95,6 @@ def bass() -> list[tuple[int, int, int, int]]:
     return ev
 
 
-def note_block(note: int, velocity: int, length: int) -> list[int]:
-    return [0x47, 0x61, 0x11, 0x00, note, velocity, 0, 0, 0, 0x40,
-            length & 0x7F, (length >> 7) & 0x7F, (length >> 14) & 0x7F, 0, 0, 0, 0, 0, 0, 0]
-
-
 def build_sequence(template: Path, out: Path, parts: list[tuple[str, str, str, list]]) -> None:
     src = mido.MidiFile(template)
     mid = mido.MidiFile(type=1, ticks_per_beat=src.ticks_per_beat)
@@ -139,7 +134,7 @@ def build_sequence(template: Path, out: Path, parts: list[tuple[str, str, str, l
         now = 0
         for tick, note, vel, length in sorted(events):
             tick = max(tick, 0)
-            track.append(mido.MetaMessage("sequencer_specific", data=note_block(note, vel, length), time=tick - now))
+            track.append(mido.MetaMessage("sequencer_specific", data=list(encode_note(note, vel, length)), time=tick - now))
             now = tick
         track.append(mido.MetaMessage("end_of_track", time=0))
         mid.tracks.append(track)
@@ -169,10 +164,10 @@ def copy_program(expansions: Path, spec: tuple[str, str, str, str], data_dir: Pa
     return copied
 
 
-def main(template_xpj: Path, expansions: Path, out_dir: Path) -> None:
+def main(template_xpj: Path, expansions: Path, out_dir: Path, project: str = NAME) -> None:
     tpl_data = template_xpj.with_name(f"{template_xpj.stem}_[ProjectData]")
-    xpj = out_dir / f"{NAME}.xpj"
-    data_dir = out_dir / f"{NAME}_[ProjectData]"
+    xpj = out_dir / f"{project}.xpj"
+    data_dir = out_dir / f"{project}_[ProjectData]"
     if xpj.exists() or data_dir.exists():
         sys.exit(f"{xpj} already exists; not overwriting")
     data_dir.mkdir()
@@ -204,4 +199,4 @@ def main(template_xpj: Path, expansions: Path, out_dir: Path) -> None:
 
 
 if __name__ == "__main__":
-    main(*(Path(a) for a in sys.argv[1:4]))
+    main(*(Path(a) for a in sys.argv[1:4]), *sys.argv[4:5])

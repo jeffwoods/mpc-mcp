@@ -165,6 +165,15 @@ def test_track_header():
     assert sequence.parse_track_header(moved) == {"index": 2, "type": "Plugin", "program": "Plugin 001"}
 
 
+def test_encode_note_matches_os_215():
+    from mpc_mcp import sequence
+
+    # A note as saved by OS 2.15.1 (Coya jam, Track 01): C#2, velocity 113, 374 ticks.
+    saved = bytes.fromhex("47 61 11 02 25 71 00 00 00 40 76 02 00 00 00 00 00 00 00 64")
+    assert sequence.encode_note(0x25, 0x71, 374) == saved
+    assert sequence.decode_note(saved) == (0x25, 0x71, 374)
+
+
 def test_mpc_sequence(tmp_path):
     from mpc_mcp import sequence
 

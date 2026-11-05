@@ -3,7 +3,11 @@
 An .sxq is a standard type 1 MIDI file, but the MPC doesn't store notes as note-on/off. Each note
 is a sequencer-specific meta event with Akai's prefix "Ga" (0x47 0x61) and type 0x11:
 
-    47 61 11 00 <note> <velocity> 00 00 00 40 <length, 7-bit chunks, low first> 00 ...
+    47 61 11 <flags> <note> <velocity> 00 00 00 40 <length, 7-bit chunks, low first> 00 ... <byte 19>
+
+OS 2.15.1 writes flags 02 and a per-note value in byte 19, usually 100 (its range in real files,
+21 to 100, suggests a percentage, possibly probability). Older files write 00 and 00, and OS 2.15.1
+plays those notes silently, so encode_note always writes the 2.15 form.
 
 Pad pressure is stored as polyphonic aftertouch. Each track starts with a header event (type 0x10):
 byte 4 is the track index, byte 5 the track type (TRACK_TYPES), and it ends with the program name,
@@ -70,6 +74,13 @@ def decode_note(data: bytes) -> tuple[int, int, int] | None:
     for i, b in enumerate(data[10:14]):
         length |= (b & 0x7F) << (7 * i)
     return note, velocity, length
+
+
+def encode_note(note: int, velocity: int, length: int, value: int = 100) -> bytes:
+    """Encode a note the way MPC OS 2.15.1 saves it. Length is in ticks."""
+    length = max(int(length), 1)
+    return bytes([0x47, 0x61, NOTE_EVENT, 0x02, note, velocity, 0, 0, 0, 0x40,
+                  length & 0x7F, (length >> 7) & 0x7F, (length >> 14) & 0x7F, 0, 0, 0, 0, 0, 0, value])
 
 
 def read_sequence(path: Path) -> dict[str, Any]:
