@@ -14,7 +14,7 @@ State on 2026-11-04. Repo: ~/claudeprojects/mpc-mcp, pushed to github.com/jeffwo
 - Keygroups: `RootNote` = note + 1 (from OS 2.11 expansions); 0 = use the WAV's smpl unity (OS 2.7 expansions). We write the explicit form with KeyTrack True, one instrument per keygroup as the 2.15.1 blank does. Loops set SliceLoop 1 and SliceLoopStart plus LoopStart/LoopEnd. Confirmed on hardware ("Dilla Sketch 6"): bass and keys in tune, Taurus sustains on its loop.
 - Keys were silent in Dilla Sketch 3-5 because the Keys track was saved muted: its header was copied from First Project's track 3, which is muted (state byte 07; bit 0 = mute). `retarget_track_header` now clears the mute bit, and `check_project_for_standalone` warns about muted tracks. Keygroup pads in bank A play notes 0-15, so pads only sound when a zone covers those notes (Rhodes starts at 21; use banks C/D).
 - "Dilla Sketch 6" is the first generated project with all three tracks playing, all programs built (Taurus and Rhodes zones read from the expansions). Drier than Dilla Sketch 4, whose copied programs had a Compressor Vintage insert.
-- Keygroup pads: the builder rotates PadNoteMap so pad 1 is the first C the keygroups cover (Rhodes: bank A = 24-39). "Dilla Sketch 7" tests whether the OS honours it; if Keys bank A pads still play 0-15 (silent), the OS ignores the map and this should come out.
+- Keygroup pads: the builder rotates PadNoteMap so pad 1 is the first C the keygroups cover (Rhodes: bank A = 24-39). Confirmed on hardware: OS 2.15.1 honours a keygroup PadNoteMap ("Dilla Sketch 7" bank A plays the Rhodes).
 - Not built: velocity layers (zones_from_program takes the first layer only), insert effects, envelopes other than release.
 
 ## Confirmed .sxq facts (see sequence.py and README)

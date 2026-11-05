@@ -17,8 +17,8 @@ note the sample sounds at its own pitch, plus 1; 0 means "use the WAV's smpl uni
 expansions use the +1 form (sample "Atari(36)" alone on key 36 has RootNote 37, while its smpl
 unity is a placeholder 60); OS 2.7 ones use 0 and real unity notes. We write the explicit form.
 The blank's PadNoteMap is the identity (pad 1 = note 0), so pad bank A plays notes 0-15, below most
-instruments. We rotate it so pad 1 is the first C the keygroups cover. Whether the OS honours a
-keygroup PadNoteMap is untested on hardware.
+instruments. We rotate it so pad 1 is the first C the keygroups cover; OS 2.15.1 honours a keygroup
+PadNoteMap (confirmed on hardware).
 """
 
 from __future__ import annotations
