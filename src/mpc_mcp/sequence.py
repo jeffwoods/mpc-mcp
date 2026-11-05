@@ -11,7 +11,8 @@ writes the 2.15 form; whether 2.15 still plays 00/00 notes hasn't been tested.
 
 Pad pressure is stored as polyphonic aftertouch. Each track starts with a header event (type 0x10):
 byte 4 is the track index, byte 5 the track type (TRACK_TYPES), and it ends with the program name,
-length-prefixed. A type 0x15 event repeats the track index in byte 3. Plugin tracks, and only
+length-prefixed. The byte before "00 64 00 00 00 00 00" holds track state; bit 0 is the track mute
+(confirmed on OS 2.15.1: a track saved with 07 played muted, 06 unmuted). A type 0x15 event repeats the track index in byte 3. Plugin tracks, and only
 those, carry a "pytT" 03 event before the track name.
 
 Worked out from files saved by MPC 2.0, 2.8 and OS 2.10; other versions may differ, so anything
@@ -31,6 +32,8 @@ TRACK_HEADER = 0x10
 TRACK_STATE = 0x15
 TRACK_TYPES = {0x00: "Drum", 0x01: "Keygroup", 0x03: "Plugin"}
 PLUGIN_MARKER = b"pytT\x03"
+STATE_MARK = b"\x00\x64\x00\x00\x00\x00\x00"
+MUTE_BIT = 0x01
 
 
 def _name_offset(data: bytes) -> int | None:
@@ -45,22 +48,35 @@ def _name_offset(data: bytes) -> int | None:
     return None
 
 
+def _state_offset(data: bytes, name_offset: int) -> int | None:
+    p = data.rfind(STATE_MARK, 6, name_offset)
+    return p - 1 if p > 6 else None
+
+
 def parse_track_header(data: bytes) -> dict[str, Any] | None:
-    """Return the track index, type and program name from a track header event, else None."""
+    """Return the track index, type, program name and mute from a track header event, else None.
+    muted is None when the state byte can't be found."""
     if len(data) < 6 or data[:2] != AKAI_PREFIX or data[2] != TRACK_HEADER:
         return None
     offset = _name_offset(data)
+    state = _state_offset(data, offset) if offset is not None else None
     return {"index": data[4], "type": TRACK_TYPES.get(data[5], f"unknown ({data[5]:#04x})"),
-            "program": data[offset + 1:].decode("ascii") if offset is not None else None}
+            "program": data[offset + 1:].decode("ascii") if offset is not None else None,
+            "muted": bool(data[state] & MUTE_BIT) if state is not None else None}
 
 
-def retarget_track_header(data: bytes, index: int, kind: str, program: str) -> bytes:
-    """Copy a track header, pointing it at another track index, type and program."""
+def retarget_track_header(data: bytes, index: int, kind: str, program: str, muted: bool = False) -> bytes:
+    """Copy a track header, pointing it at another track index, type and program. The copy is
+    unmuted unless muted is set, whatever the source track's state."""
     offset = _name_offset(data)
     if offset is None:
         raise ValueError("track header has no program name")
     body = bytearray(data[:offset])
     body[4], body[5] = index, {v: k for k, v in TRACK_TYPES.items()}[kind]
+    state = _state_offset(data, offset)
+    if state is None:
+        raise ValueError("track header has no state byte")
+    body[state] = body[state] | MUTE_BIT if muted else body[state] & ~MUTE_BIT
     name = program.encode("ascii")
     return bytes(body) + bytes([len(name)]) + name
 
@@ -128,6 +144,8 @@ def read_sequence(path: Path) -> dict[str, Any]:
         entry: dict[str, Any] = {"track": index, "name": name, "notes": notes}
         if header:
             entry["type"], entry["program"] = header["type"], header["program"]
+            if header["muted"]:
+                entry["muted"] = True
         if pressure:
             entry["pressure_events"] = pressure
         if standard_notes:

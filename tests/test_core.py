@@ -151,7 +151,8 @@ def test_track_header():
     from mpc_mcp import sequence
 
     bass = _header(3, 0x01, "Inst-Bass-F9 JP Bass")
-    assert sequence.parse_track_header(bass) == {"index": 3, "type": "Keygroup", "program": "Inst-Bass-F9 JP Bass"}
+    assert sequence.parse_track_header(bass) == {"index": 3, "type": "Keygroup", "program": "Inst-Bass-F9 JP Bass",
+                                               "muted": True}
     # A 32-character name: its length byte (0x20) is itself printable.
     kit = _header(1, 0x00, "Trap Soul Kit-Soul Love 136 C#m ")
     assert sequence.parse_track_header(kit)["program"] == "Trap Soul Kit-Soul Love 136 C#m "
@@ -159,10 +160,16 @@ def test_track_header():
     old = _header(0, 0x00, "Shadow Kit Bass", tail=b"\xff\x00\x7f\x80" + b"1" * 128 + b"\x11" + b"0" * 17
                   + bytes.fromhex("08 00 64 00 00 00 00 00 00 7f 3f"))
     assert sequence.parse_track_header(old)["program"] == "Shadow Kit Bass"
+    assert sequence.parse_track_header(old)["muted"] is False
 
     moved = sequence.retarget_track_header(old, 2, "Plugin", "Plugin 001")
     assert moved[:len(old) - 16] == bytes([*old[:4], 2, 3]) + old[6:len(old) - 16]
-    assert sequence.parse_track_header(moved) == {"index": 2, "type": "Plugin", "program": "Plugin 001"}
+    assert sequence.parse_track_header(moved) == {"index": 2, "type": "Plugin", "program": "Plugin 001", "muted": False}
+
+    # Copying a muted track (First Project's track 3 is saved 07) gives an unmuted one (06).
+    unmuted = sequence.retarget_track_header(bass, 1, "Keygroup", "Rhodes")
+    assert unmuted[-18] == 0x06 and sequence.parse_track_header(unmuted)["muted"] is False
+    assert sequence.parse_track_header(sequence.retarget_track_header(bass, 1, "Keygroup", "Rhodes", muted=True))["muted"]
 
 
 def test_encode_note_matches_os_215():

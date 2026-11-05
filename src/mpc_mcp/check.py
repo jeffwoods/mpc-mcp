@@ -1,8 +1,9 @@
 """Check whether a project (usually one saved by the desktop software) will load and play on
 standalone hardware.
 
-Four checks: the saving version against the hardware's OS, files that are missing or live
-outside the project folder, plugins the hardware may not have, and sample memory. Read-only.
+Checks the saving version against the hardware's OS, files that are missing or live
+outside the project folder, plugins the hardware may not have, muted or soloed programs and tracks,
+and sample memory. Read-only.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
-from . import project
+from . import project, sequence
 
 BUILT_IN_MARKERS = ("air music", "akai", "mpc", "inmusic")
 
@@ -168,12 +169,26 @@ def check_plugins(xpj: Path) -> dict[str, Any]:
                    plugins=records)
 
 
+def _muted_tracks(data_dir: Path) -> list[str]:
+    """Tracks saved muted in the project's sequences, as "<sequence>: <track>"."""
+    found = []
+    for sxq in sorted(p for p in data_dir.glob("*.sxq") if not p.name.startswith(".")):
+        try:
+            seq = sequence.read_sequence(sxq)
+        except Exception:
+            continue
+        found += [f"{sxq.stem}: {t['name'] or t['track']}" for t in seq["tracks"] if t.get("muted")]
+    return found
+
+
 def check_mix(xpj: Path) -> dict[str, Any]:
     """A soloed program silences every other track, pads included, and nothing on the main
     screens says so. First Project (OS 2.10 factory content) ships with its audio program
-    muted and soloed, so any project copied from it is silent."""
+    muted and soloed, so any project copied from it is silent. Its third track is also saved
+    muted, so a sequence copied from it has a silent track."""
     data_dir = _project_data_dir(xpj)
     soloed, muted = [], []
+    tracks = _muted_tracks(data_dir) if data_dir.is_dir() else []
     for xpm in _programs(data_dir) if data_dir.is_dir() else []:
         try:
             prog = ET.fromstring(project.xml_text(xpm)).find("Program")
@@ -189,10 +204,12 @@ def check_mix(xpj: Path) -> dict[str, Any]:
         return _result("mix", "fail",
                        f"{len(soloed)} program(s) soloed, so everything else is silent, pads included. "
                        "Unsolo them in the Mixer, or set Solo to False in the program file.",
-                       soloed=soloed, muted=muted)
-    if muted:
-        return _result("mix", "warn", f"{len(muted)} program(s) muted.", muted=muted)
-    return _result("mix", "ok", "No programs muted or soloed.")
+                       soloed=soloed, muted=muted, muted_tracks=tracks)
+    if muted or tracks:
+        parts = [f"{len(muted)} program(s) muted"] if muted else []
+        parts += [f"{len(tracks)} sequence track(s) muted ({', '.join(tracks)})"] if tracks else []
+        return _result("mix", "warn", "; ".join(parts) + ".", muted=muted, muted_tracks=tracks)
+    return _result("mix", "ok", "No programs or tracks muted or soloed.")
 
 
 def _audio_bytes(path: Path) -> tuple[int, bool]:

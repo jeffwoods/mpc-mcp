@@ -12,11 +12,12 @@ State on 2026-11-04. Repo: ~/claudeprojects/mpc-mcp, pushed to github.com/jeffwo
 `program.py` builds drum and keygroup programs from blank programs OS 2.15.1 wrote (Coya jam's Program 001 and 002, gzipped in `templates/`). MCP tools: `read_drum_pads`, `build_drum_program`, `read_keygroup_zones`, `build_keygroup_program`.
 - Drums: confirmed on hardware ("Dilla Sketch 4" played). Rebuilding Coya's Urban Kit reproduced the OS's SampleName, SliceEnd and MuteGroup on all 16 pads.
 - Keygroups: `RootNote` = note + 1 (from OS 2.11 expansions); 0 = use the WAV's smpl unity (OS 2.7 expansions). We write the explicit form with KeyTrack True, one instrument per keygroup as the 2.15.1 blank does. Loops set SliceLoop 1 and SliceLoopStart plus LoopStart/LoopEnd; untested on hardware.
+- Keys were silent in Dilla Sketch 3-5 because the Keys track was saved muted: its header was copied from First Project's track 3, which is muted (state byte 07; bit 0 = mute). `retarget_track_header` now clears the mute bit, and `check_project_for_standalone` warns about muted tracks. Keygroup pads in bank A play notes 0-15, so pads only sound when a zone covers those notes (Rhodes starts at 21; use banks C/D).
 - "Dilla Sketch 5" on the card has all three programs built (Taurus and Rhodes zones read from the expansions). Waiting on a hardware test: bass and keys should be in tune and the Taurus should sustain on its loop. They're drier than Dilla Sketch 4 because the copied programs had a Compressor Vintage insert.
 - Not built: velocity layers (zones_from_program takes the first layer only), insert effects, envelopes other than release.
 
 ## Confirmed .sxq facts (see sequence.py and README)
-- Track header `47 61 10`: byte 4 is the track index, byte 5 the type (00 drum, 01 keygroup, 03 plugin), and it ends with a length-prefixed program name. `47 61 15` repeats the index in byte 3. `pytT 03` appears on plugin tracks only.
+- Track header `47 61 10`: byte 4 is the track index, byte 5 the type (00 drum, 01 keygroup, 03 plugin), and it ends with a length-prefixed program name. `47 61 15` repeats the index in byte 3. `pytT 03` appears on plugin tracks only. The byte before `00 64 00 00 00 00 00` is track state; bit 0 = mute (confirmed). Bit 3 (0x08, set on First Project's track 2) is unknown; that track played.
 - OS 2.15.1 writes notes as `47 61 11 02 ... <byte 19 = 100>`; older files write `00 ... 00`. Untested whether 2.15 plays the old form; the encoder writes the 2.15 form.
 
 ## Open

@@ -148,3 +148,20 @@ def test_muted_program_warns(tmp_path):
     xpj = make_project(tmp_path)
     (tmp_path / "Song_[ProjectData]" / "Audio 001.Audio.xpm").write_text(AUDIO.format(mute="True", solo="False"))
     assert by_name(check_for_standalone(xpj))["mix"]["status"] == "warn"
+
+
+def test_muted_track_warns(tmp_path):
+    import mido
+    from mpc_mcp.sequence import encode_note
+
+    xpj = make_project(tmp_path)
+    header = (bytes.fromhex("47 61 10 01 02 01 00 09") + b"All Ports\x00"
+              + bytes.fromhex("07 00 64 00 00 00 00 00 10 7f 40") + bytes([6]) + b"Rhodes")
+    mid = mido.MidiFile(type=1)
+    mid.tracks.append(mido.MidiTrack([mido.MetaMessage("track_name", name="Seq")]))
+    mid.tracks.append(mido.MidiTrack([mido.MetaMessage("track_name", name="Keys"),
+                                      mido.MetaMessage("sequencer_specific", data=list(header)),
+                                      mido.MetaMessage("sequencer_specific", data=list(encode_note(60, 90, 480)))]))
+    mid.save(tmp_path / "Song_[ProjectData]" / "1.sxq")
+    mix = by_name(check_for_standalone(xpj))["mix"]
+    assert mix["status"] == "warn" and mix["muted_tracks"] == ["1: Keys"]
