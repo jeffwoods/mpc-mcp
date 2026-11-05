@@ -6,8 +6,8 @@ is a sequencer-specific meta event with Akai's prefix "Ga" (0x47 0x61) and type 
     47 61 11 <flags> <note> <velocity> 00 00 00 40 <length, 7-bit chunks, low first> 00 ... <byte 19>
 
 OS 2.15.1 writes flags 02 and a per-note value in byte 19, usually 100 (its range in real files,
-21 to 100, suggests a percentage, possibly probability). Older files write 00 and 00, and OS 2.15.1
-plays those notes silently, so encode_note always writes the 2.15 form.
+21 to 100, suggests a percentage, possibly probability). Older files write 00 and 00. encode_note
+writes the 2.15 form; whether 2.15 still plays 00/00 notes hasn't been tested.
 
 Pad pressure is stored as polyphonic aftertouch. Each track starts with a header event (type 0x10):
 byte 4 is the track index, byte 5 the track type (TRACK_TYPES), and it ends with the program name,

@@ -147,11 +147,18 @@ def build_sequence(template: Path, out: Path, parts: list[tuple[str, str, str, l
     mid.save(out)
 
 
+def unsolo(text: str) -> str:
+    """Clear program-level mute and solo. First Project's audio program is saved muted and soloed,
+    which silences every other track, pads included."""
+    text = text.replace("<Mute>True</Mute>", "<Mute>False</Mute>")
+    return text.replace("<Solo>True</Solo>", "<Solo>False</Solo>")
+
+
 def copy_program(expansions: Path, spec: tuple[str, str, str, str], data_dir: Path) -> list[str]:
     folder, source, name, kind = spec
     src_dir = expansions / folder
     text = (src_dir / f"{source}.xpm").read_text(encoding="utf-8")
-    text = re.sub(r"<ProgramName>[^<]*</ProgramName>", f"<ProgramName>{name}</ProgramName>", text, count=1)
+    text = unsolo(re.sub(r"<ProgramName>[^<]*</ProgramName>", f"<ProgramName>{name}</ProgramName>", text, count=1))
     target = data_dir / f"{name}.{kind}.xpm"
     target.write_text(text, encoding="utf-8")
     samples = sorted(set(re.findall(r"<SampleName>([^<]+)</SampleName>", text)))
@@ -175,8 +182,10 @@ def main(template_xpj: Path, expansions: Path, out_dir: Path, project: str = NAM
     files = ["All Sequences & Songs.xal"]
     for spec in (KIT, BASS, KEYS):
         files += copy_program(expansions, spec, data_dir)
-    for keep in ("Audio 001.Audio.xpm", "Project Settings.xml", "Midi Controller.mcn"):
+    for keep in ("Project Settings.xml", "Midi Controller.mcn"):
         shutil.copyfile(tpl_data / keep, data_dir / keep)
+    audio = (tpl_data / "Audio 001.Audio.xpm").read_bytes().decode("utf-8")
+    (data_dir / "Audio 001.Audio.xpm").write_bytes(unsolo(audio).encode("utf-8"))
     files.append("Audio 001.Audio.xpm")
 
     xal = (tpl_data / "All Sequences & Songs.xal").read_text(encoding="utf-8")

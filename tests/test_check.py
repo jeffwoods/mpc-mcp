@@ -127,3 +127,24 @@ def test_ignores_macos_metadata_files(tmp_path):
     (tmp_path / "Song_[ProjectData]" / "._Kit.Drum.xpm").write_bytes(b"\x00\x05\x16\x07binary")
     (tmp_path / "Song_[ProjectData]" / "._Kick.WAV").write_bytes(b"\x00\x05\x16\x07")
     assert check_for_standalone(xpj)["verdict"] == "ok"
+
+
+AUDIO = """<?xml version="1.0" encoding="UTF-8"?>
+<MPCVObject><Program type="Audio"><ProgramName>Audio 001</ProgramName>
+<Volume>0.707946</Volume><Mute>{mute}</Mute><Solo>{solo}</Solo></Program></MPCVObject>"""
+
+
+def test_soloed_program_fails(tmp_path):
+    # First Project (OS 2.10 factory content) ships its audio program like this; it silences everything.
+    xpj = make_project(tmp_path)
+    (tmp_path / "Song_[ProjectData]" / "Audio 001.Audio.xpm").write_text(AUDIO.format(mute="True", solo="True"))
+    r = check_for_standalone(xpj)
+    mix = by_name(r)["mix"]
+    assert mix["status"] == "fail" and mix["soloed"] == ["Audio 001.Audio.xpm"]
+    assert r["verdict"] == "fail"
+
+
+def test_muted_program_warns(tmp_path):
+    xpj = make_project(tmp_path)
+    (tmp_path / "Song_[ProjectData]" / "Audio 001.Audio.xpm").write_text(AUDIO.format(mute="True", solo="False"))
+    assert by_name(check_for_standalone(xpj))["mix"]["status"] == "warn"

@@ -168,6 +168,33 @@ def check_plugins(xpj: Path) -> dict[str, Any]:
                    plugins=records)
 
 
+def check_mix(xpj: Path) -> dict[str, Any]:
+    """A soloed program silences every other track, pads included, and nothing on the main
+    screens says so. First Project (OS 2.10 factory content) ships with its audio program
+    muted and soloed, so any project copied from it is silent."""
+    data_dir = _project_data_dir(xpj)
+    soloed, muted = [], []
+    for xpm in _programs(data_dir) if data_dir.is_dir() else []:
+        try:
+            prog = ET.fromstring(project.xml_text(xpm)).find("Program")
+        except (ET.ParseError, UnicodeDecodeError):
+            continue
+        if prog is None:
+            continue
+        if (prog.findtext("Solo") or "").strip() == "True":
+            soloed.append(xpm.name)
+        if (prog.findtext("Mute") or "").strip() == "True":
+            muted.append(xpm.name)
+    if soloed:
+        return _result("mix", "fail",
+                       f"{len(soloed)} program(s) soloed, so everything else is silent, pads included. "
+                       "Unsolo them in the Mixer, or set Solo to False in the program file.",
+                       soloed=soloed, muted=muted)
+    if muted:
+        return _result("mix", "warn", f"{len(muted)} program(s) muted.", muted=muted)
+    return _result("mix", "ok", "No programs muted or soloed.")
+
+
 def _audio_bytes(path: Path) -> tuple[int, bool]:
     """Approximate uncompressed size. Returns (bytes, exact)."""
     if path.suffix.lower() == ".wav":
@@ -214,6 +241,7 @@ def check_for_standalone(path: Path, os_version: str = "2.15", ram_gb: float = 2
         check_files(xpj, decoded),
         check_samples(xpj),
         check_plugins(xpj),
+        check_mix(xpj),
         check_memory(xpj, ram_gb),
     ]
     statuses = {c["status"] for c in checks}
