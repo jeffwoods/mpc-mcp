@@ -16,6 +16,9 @@ range, and KeygroupNumKeygroups says how many (the blank has one). A layer's Roo
 note the sample sounds at its own pitch, plus 1; 0 means "use the WAV's smpl unity note". OS 2.11
 expansions use the +1 form (sample "Atari(36)" alone on key 36 has RootNote 37, while its smpl
 unity is a placeholder 60); OS 2.7 ones use 0 and real unity notes. We write the explicit form.
+The blank's PadNoteMap is the identity (pad 1 = note 0), so pad bank A plays notes 0-15, below most
+instruments. We rotate it so pad 1 is the first C the keygroups cover. Whether the OS honours a
+keygroup PadNoteMap is untested on hardware.
 """
 
 from __future__ import annotations
@@ -220,6 +223,23 @@ def _load_zone(block: str, sample_name: str, frames: int, zone: Zone, low: int, 
     return f"{head}<Layers>{first}</Layer>{rest}"
 
 
+def _first_pad_note(low: int) -> int:
+    """The first C at or above the lowest covered note."""
+    return min(-(-low // 12) * 12, 120)
+
+
+def _rotate_pads(text: str, first: int) -> str:
+    """Pad N plays note (first + N - 1) mod 128, keeping the map a permutation of all 128 notes."""
+    def pad(m: re.Match) -> str:
+        return f'{m.group(1)}{(first + int(m.group(2)) - 1) % 128}{m.group(3)}'
+    head, sep, rest = text.partition("<PadNoteMap>")
+    body, end, tail = rest.partition("</PadNoteMap>")
+    if not sep or not end:
+        raise ValueError("blank keygroup program has no PadNoteMap")
+    body = re.sub(r'(<PadNote number="(\d+)">\s*<Note>)\d+(</Note>)', pad, body)
+    return head + sep + body + end + tail
+
+
 def keygroup_program_xml(name: str, zones: list[tuple[str, int, Zone]], release: float | None = None) -> str:
     """zones: (sample name, frame count, Zone), sorted by root."""
     if not 1 <= len(zones) <= 128:
@@ -238,6 +258,7 @@ def keygroup_program_xml(name: str, zones: list[tuple[str, int, Zone]], release:
         for i, ((s, frames, z), (low, high)) in enumerate(zip(zones, ranges), start=1))
     text = INSTRUMENT.sub(lambda _: built, text, count=1)
     text = _set(text, "KeygroupNumKeygroups", str(len(zones)))
+    text = _rotate_pads(text, _first_pad_note(ranges[0][0]))
     return re.sub(r"<ProgramName>[^<]*</ProgramName>", lambda _: f"<ProgramName>{escape(name)}</ProgramName>", text, count=1)
 
 

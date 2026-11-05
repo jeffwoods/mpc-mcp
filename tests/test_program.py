@@ -101,6 +101,18 @@ def test_build_keygroup_program(tmp_path):
         ("3", 55, 66, "Keys 60", 61, "True", 0, "0", "0.180000"),
         ("4", 67, 127, "Keys 72", 73, "True", 0, "0", "0.180000"),
     ]
+    # The lowest keygroup starts at 0, so the pads keep the blank's identity map.
+    assert program._pad_notes((out / files[0]).read_text())[1] == 0
+
+
+def test_keygroup_pads_start_on_covered_c(tmp_path):
+    src, out = tmp_path / "src", tmp_path / "out"
+    src.mkdir(), out.mkdir()
+    zones = [program.Zone(_wav(src / "A0.wav"), 21, low=21, high=40), program.Zone(_wav(src / "C3.wav"), 48, high=108)]
+    files = program.write_keygroup_program(out, "Rhodes", zones)
+    pads = program._pad_notes((out / files[0]).read_text())
+    assert [pads[n] for n in (1, 2, 16, 105, 106, 128)] == [24, 25, 39, 0, 1, 23]
+    assert sorted(pads.values()) == list(range(128))
 
 
 def test_zones_round_trip_and_smpl_fallback(tmp_path):
